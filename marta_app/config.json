@@ -1,0 +1,24 @@
+{
+    "marta_ip": "10.4.133.77",
+    "esp32_ip": "10.4.136.69",
+    "cycle_defaults": {
+        "max_temp": 15,
+        "min_temp": 10,
+        "cycles": 2,
+        "dwell_s": 60
+    },
+    "safety_limits": {
+        "pump_rpm_default": 6000
+    },
+    "paths": {
+        "run_sequence_file": "/home/cleanroom2/Downloads/marta_logs/sequence.txt",
+        "base_log_dir": "/home/cleanroom2/Downloads/marta_logs"
+    },
+    "influxdb": {
+        "url": "http://localhost:8086",
+        "token": "Muwa0MXdOvKQay3cPDVXRKfJBTcxKMKF9nx8u6FX2wmBghF-jPwSdF3s5JN2Ritu4bjetziarOrDGrgs_nYk1A==",
+        "org": "niser",
+        "bucket": "ladder",
+        "enabled": true
+    }
+}

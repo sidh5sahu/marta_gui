@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MARTA Web Dashboard</title>
+    <style>
+        body { font-family: sans-serif; background: #f0f0f0; margin: 0; padding: 20px; }
+        h1 { margin-top: 0; }
+        .container { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+        .card { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .card h2 { margin-top: 0; border-bottom: 2px solid #eee; padding-bottom: 5px; }
+        .param-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+        .param-label { font-weight: bold; color: #555; }
+        .param-value { text-align: right; font-family: monospace; }
+        .alarm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 5px; }
+        .alarm { padding: 5px; border-radius: 4px; text-align: center; font-size: 0.8em; background: #eee; color: #aaa; }
+        .alarm.active { background: #ff4444; color: white; font-weight: bold; }
+        .status-bar { background: #333; color: white; padding: 10px; position: fixed; bottom: 0; left: 0; right: 0; display: flex; justify-content: space-between; }
+    </style>
+</head>
+<body>
+
+    <h1>MARTA Dashboard</h1>
+
+    <div class="container">
+        <!-- Main Temps -->
+        <div class="card">
+            <h2>Temperatures</h2>
+            <div class="param-grid" id="temps-grid">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+
+        <!-- Pressures -->
+        <div class="card">
+            <h2>Pressures</h2>
+            <div class="param-grid" id="press-grid">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+
+        <!-- System Status -->
+        <div class="card">
+            <h2>System Status</h2>
+            <div class="param-grid">
+                <div class="param-label">Status Code:</div><div class="param-value" id="val-status">--</div>
+                <div class="param-label">Control Word:</div><div class="param-value" id="val-control">--</div>
+                <div class="param-label">Pump Speed:</div><div class="param-value" id="val-pump">--</div>
+            </div>
+        </div>
+
+        <!-- Ambient -->
+        <div class="card">
+            <h2>Ambient (ESP32)</h2>
+            <div class="param-grid" id="ambient-grid">
+                <div class="param-label">S1 Temp:</div><div class="param-value" id="amb-s1-t">--</div>
+                <div class="param-label">S1 Hum:</div><div class="param-value" id="amb-s1-h">--</div>
+                <div class="param-label">S1 Dew:</div><div class="param-value" id="amb-s1-d">--</div>
+                <div class="param-label">S2 Temp:</div><div class="param-value" id="amb-s2-t">--</div>
+                <div class="param-label">Max Dew:</div><div class="param-value" id="amb-dew-max">--</div>
+            </div>
+        </div>
+        
+        <!-- Alarms -->
+        <div class="card" style="grid-column: 1 / -1;">
+            <h2>Alarms</h2>
+            <div class="alarm-grid" id="alarms-grid">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+    </div>
+
+    <div class="status-bar">
+        <span id="conn-status">Connecting...</span>
+        <span id="last-update">Last Update: --</span>
+    </div>
+
+    <script>
+        // Mapping of Address to Name (Subset for display)
+        const paramMap = {
+            118: "TT01_R452A", 120: "TT02_R452A", 122: "TT03_R452A", 124: "TT04_R452A",
+            126: "TT01_CO2", 128: "TT02_CO2", 130: "TT03_CO2", 132: "TT04_CO2", 134: "TT05_CO2", 136: "TT06_CO2", 138: "TT07_CO2",
+            100: "PT01_R452A", 102: "PT03_R452A", 104: "PT04_R452A",
+            106: "PT01_CO2", 108: "PT02_CO2", 110: "PT03_CO2", 112: "PT04_CO2", 114: "PT05_CO2", 116: "PT06_CO2",
+            200: "LP Speed"
+        };
+
+        // Alarm Definitions (Address, Bit, Name) - Simplified list or full list
+        // We can fetch this from server or hardcode. Hardcoding for now based on app.py
+        const alarmDefs = [
+            [300, 0, "ChTT_IOErr_FS"], [300, 1, "ChPT_IOErr_FS"], [300, 2, "PS_HP_FS"], [300, 3, "PS_LP_FS"],
+            [300, 4, "CP_HP_FS"], [300, 5, "CP_HP_W"], [300, 6, "CP_LP_FS"], [300, 7, "CP_LP_W"],
+            [302, 2, "DP01_CO2_FS"], [302, 3, "DP01_CO2_W"], [302, 4, "DP02_CO2_FS"], [302, 5, "DP02_CO2_W"],
+            [302, 10, "DT03_CO2_HT_FS"], [302, 11, "DT03_CO2_HT_W"],
+            [303, 2, "TT04_CO2_HT_FS"], [303, 3, "TT04_CO2_HT_TS"], [303, 4, "TT04_CO2_HT_W"]
+        ];
+
+        function init() {
+            // Init Grids
+            const tGrid = document.getElementById('temps-grid');
+            const pGrid = document.getElementById('press-grid');
+            
+            for (const [addr, name] of Object.entries(paramMap)) {
+                const divL = document.createElement('div'); divL.className = 'param-label'; divL.innerText = name + ":";
+                const divV = document.createElement('div'); divV.className = 'param-value'; divV.id = 'val-' + addr; divV.innerText = '--';
+                
+                if (name.startsWith("TT") || name.startsWith("DT") || name.startsWith("ST")) tGrid.append(divL, divV);
+                else if (name.startsWith("PT") || name.startsWith("DP")) pGrid.append(divL, divV);
+            }
+
+            const aGrid = document.getElementById('alarms-grid');
+            alarmDefs.forEach(([addr, bit, name]) => {
+                const div = document.createElement('div');
+                div.className = 'alarm';
+                div.id = `alarm-${addr}-${bit}`;
+                div.innerText = name;
+                aGrid.appendChild(div);
+            });
+        }
+
+        async function update() {
+            try {
+                const res = await fetch('/api/data');
+                const data = await res.json();
+                
+                document.getElementById('conn-status').innerText = "Connected";
+                document.getElementById('last-update').innerText = "Last Update: " + new Date().toLocaleTimeString();
+
+                if (data.modbus) {
+                    const floats = data.modbus.floats || {};
+                    const alarms = data.modbus.alarms || {};
+                    
+                    // Update Params
+                    for (const [addr, name] of Object.entries(paramMap)) {
+                        const el = document.getElementById('val-' + addr);
+                        if (el) el.innerText = floats[addr] !== undefined ? floats[addr].toFixed(2) : '--';
+                    }
+                    
+                    // Update Status
+                    document.getElementById('val-status').innerText = data.modbus.status || '--';
+                    document.getElementById('val-control').innerText = data.modbus.control || '--';
+                    document.getElementById('val-pump').innerText = floats[200] !== undefined ? floats[200].toFixed(1) : '--';
+
+                    // Update Alarms
+                    alarmDefs.forEach(([addr, bit, name]) => {
+                        const el = document.getElementById(`alarm-${addr}-${bit}`);
+                        const regVal = alarms[addr] || 0;
+                        const isSet = (regVal >> bit) & 1;
+                        if (isSet) el.classList.add('active');
+                        else el.classList.remove('active');
+                    });
+                }
+
+                if (data.ambient) {
+                    const s1 = data.ambient.s1 || [null, null, null];
+                    const s2 = data.ambient.s2 || [null, null, null];
+                    document.getElementById('amb-s1-t').innerText = s1[0] !== null ? s1[0].toFixed(1) : '--';
+                    document.getElementById('amb-s1-h').innerText = s1[1] !== null ? s1[1].toFixed(0) + '%' : '--';
+                    document.getElementById('amb-s1-d').innerText = s1[2] !== null ? s1[2].toFixed(1) : '--';
+                    document.getElementById('amb-s2-t').innerText = s2[0] !== null ? s2[0].toFixed(1) : '--';
+                    document.getElementById('amb-dew-max').innerText = data.ambient.dew_max !== null ? data.ambient.dew_max.toFixed(2) : '--';
+                }
+
+            } catch (e) {
+                console.error(e);
+                document.getElementById('conn-status').innerText = "Connection Error";
+            }
+            
+            setTimeout(update, 2000);
+        }
+
+        init();
+        update();
+    </script>
+</body>
+</html>
