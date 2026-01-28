@@ -880,12 +880,12 @@ class MartaGUI:
         self.log(f"Connecting to {ip}...")
         c = get_modbus_client(ip)
         if not c.connect():
-            self.gui_update_q.put({"type": "conn_status", "text": "Failed", "fg": "red"})
+            self.gui_update_q.put({"type": "conn_status", "text": "MARTA: Failed", "fg": "red"})
             self.log("Connection failed.")
             return
         self.client = c
         self.connected = True
-        self.gui_update_q.put({"type": "conn_status", "text": "Connected", "fg": "green"})
+        self.gui_update_q.put({"type": "conn_status", "text": "MARTA: Connected", "fg": "green"})
         self.log("Connected to MARTA.")
 
         self.btn_start_chiller.config(state=tk.NORMAL)
@@ -1309,7 +1309,7 @@ class MartaGUI:
         self.btn_start_co2.config(state=tk.DISABLED, text="Start CO₂")
         self.btn_stop_co2.config(state=tk.DISABLED)
         self.btn_stop_all.config(state=tk.DISABLED)
-        self.gui_update_q.put({"type": "conn_status", "text": "Disconnected", "fg": "red"})
+        self.gui_update_q.put({"type": "conn_status", "text": "MARTA: Disconnected", "fg": "red"})
         self.gui_update_q.put({"type": "esp_status", "text": "ESP32: Disconnected", "fg": "red"})
         
         self.stopwatch_start_time = None 
@@ -1797,17 +1797,17 @@ class MartaGUI:
             tolerance = (self.poller.interval * 2.5) 
             
             if elapsed > tolerance:
-                if self.lab_conn.cget("text") != "POLLING FAILED":
+                if self.lab_conn.cget("text") != "MARTA: POLLING FAILED":
                     self.log("POLLER HEARTBEAT FAILED. Updating status label.")
-                    self.gui_update_q.put({"type": "conn_status", "text": "POLLING FAILED", "fg": "red"})
+                    self.gui_update_q.put({"type": "conn_status", "text": "MARTA: POLLING FAILED", "fg": "red"})
             else:
-                if self.lab_conn.cget("text") != "Connected":
+                if self.lab_conn.cget("text") != "MARTA: Connected":
                     self.log("Poller heartbeat recovered.")
-                    self.gui_update_q.put({"type": "conn_status", "text": "Connected", "fg": "green"})
+                    self.gui_update_q.put({"type": "conn_status", "text": "MARTA: Connected", "fg": "green"})
         
         elif not self.connected:
-            if self.lab_conn.cget("text") != "Disconnected":
-                self.gui_update_q.put({"type": "conn_status", "text": "Disconnected", "fg": "red"})
+            if self.lab_conn.cget("text") != "MARTA: Disconnected":
+                self.gui_update_q.put({"type": "conn_status", "text": "MARTA: Disconnected", "fg": "red"})
 
         self.health_check_job = self.root.after(5000, self._check_connection_health) 
 

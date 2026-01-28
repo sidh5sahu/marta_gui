@@ -3,8 +3,8 @@
     "esp32_ip": "10.4.136.191",
     "cycle_defaults": {
         "max_temp": 15,
-        "min_temp": 10,
-        "cycles": 2,
+        "min_temp": -35,
+        "cycles": 1,
         "dwell_s": 60
     },
     "safety_limits": {
@@ -21,6 +21,6 @@
         "bucket": "ladder",
         "enabled": true
     },
-    "last_run_number": 6,
+    "last_run_number": 12,
     "_comment": "MARTA GUI Configuration File"
 }
