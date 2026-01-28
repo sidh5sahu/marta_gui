@@ -1,32 +1,281 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MARTA Web Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { font-family: sans-serif; background: #f0f0f0; margin: 0; padding: 20px; }
-        h1 { margin-top: 0; }
-        .container { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
-        .card { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        .card h2 { margin-top: 0; border-bottom: 2px solid #eee; padding-bottom: 5px; }
-        .param-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
-        .param-label { font-weight: bold; color: #555; }
-        .param-value { text-align: right; font-family: monospace; }
-        .alarm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 5px; }
-        .alarm { padding: 5px; border-radius: 4px; text-align: center; font-size: 0.8em; background: #eee; color: #aaa; }
-        .alarm.active { background: #ff4444; color: white; font-weight: bold; }
-        .status-bar { background: #333; color: white; padding: 10px; position: fixed; bottom: 0; left: 0; right: 0; display: flex; justify-content: space-between; }
+        :root {
+            --bg-dark: #1a1a2e;
+            --bg-card: #16213e;
+            --accent: #0f3460;
+            --highlight: #e94560;
+            --text: #eee;
+            --text-muted: #888;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: var(--bg-dark);
+            color: var(--text);
+            margin: 0;
+            padding: 20px;
+            padding-bottom: 60px;
+        }
+
+        h1 {
+            margin-top: 0;
+            color: var(--highlight);
+            text-align: center;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+            max-width: 1800px;
+            margin: 0 auto;
+        }
+
+        .card {
+            background: var(--bg-card);
+            padding: 15px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        }
+
+        .card h2 {
+            margin-top: 0;
+            border-bottom: 2px solid var(--accent);
+            padding-bottom: 8px;
+            color: var(--highlight);
+            font-size: 1.1em;
+        }
+
+        .card.full-width {
+            grid-column: 1 / -1;
+        }
+
+        .param-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 5px;
+        }
+
+        .param-label {
+            font-weight: 500;
+            color: var(--text-muted);
+            font-size: 0.9em;
+        }
+
+        .param-value {
+            text-align: right;
+            font-family: 'Consolas', monospace;
+            color: #4ade80;
+        }
+
+        .alarm-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 5px;
+        }
+
+        .alarm {
+            padding: 6px;
+            border-radius: 6px;
+            text-align: center;
+            font-size: 0.75em;
+            background: var(--accent);
+            color: var(--text-muted);
+            transition: all 0.3s;
+        }
+
+        .alarm.active {
+            background: var(--highlight);
+            color: white;
+            font-weight: bold;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.7;
+            }
+        }
+
+        .chart-container {
+            height: 250px;
+            position: relative;
+        }
+
+        .status-bar {
+            background: linear-gradient(90deg, var(--accent), var(--bg-card));
+            color: white;
+            padding: 12px 20px;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.9em;
+        }
+
+        .status-bar .connected {
+            color: #4ade80;
+        }
+
+        .status-bar .disconnected {
+            color: var(--highlight);
+        }
+
+        /* Tabs for plots */
+        .tabs {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 10px;
+        }
+
+        .tab {
+            padding: 8px 16px;
+            background: var(--accent);
+            border: none;
+            border-radius: 6px 6px 0 0;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 0.85em;
+        }
+
+        .tab.active {
+            background: var(--bg-dark);
+            color: var(--highlight);
+        }
+
+        /* Log History Styles */
+        .log-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .log-run {
+            background: var(--accent);
+            border-radius: 8px;
+            margin-bottom: 8px;
+            overflow: hidden;
+        }
+
+        .log-run-header {
+            padding: 10px 15px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 500;
+        }
+
+        .log-run-header:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .log-run-files {
+            display: none;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.2);
+        }
+
+        .log-run.expanded .log-run-files {
+            display: block;
+        }
+
+        .log-file {
+            display: flex;
+            align-items: center;
+            padding: 5px 10px;
+            border-radius: 4px;
+            margin: 3px 0;
+            background: var(--bg-card);
+        }
+
+        .log-file a {
+            color: #60a5fa;
+            text-decoration: none;
+            flex-grow: 1;
+        }
+
+        .log-file a:hover {
+            text-decoration: underline;
+        }
+
+        .log-file .size {
+            color: var(--text-muted);
+            font-size: 0.8em;
+        }
+
+        .log-file.image {
+            border-left: 3px solid #4ade80;
+        }
+
+        .image-preview {
+            max-width: 100%;
+            max-height: 200px;
+            margin-top: 5px;
+            border-radius: 4px;
+        }
     </style>
 </head>
+
 <body>
 
-    <h1>MARTA Dashboard</h1>
+    <h1>🌡️ MARTA Dashboard</h1>
 
     <div class="container">
+        <!-- Temperature Plot -->
+        <div class="card">
+            <h2>📈 Temperature Trend (TT06)</h2>
+            <div class="chart-container">
+                <canvas id="tempChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Ambient Plot -->
+        <div class="card">
+            <h2>🌤️ Ambient Conditions</h2>
+            <div class="chart-container">
+                <canvas id="ambientChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Pressure Plot -->
+        <div class="card">
+            <h2>📊 Pressure Trend</h2>
+            <div class="chart-container">
+                <canvas id="pressureChart"></canvas>
+            </div>
+        </div>
+
+        <!-- All Temperatures -->
+        <div class="card">
+            <h2>🔥 All CO2 Temperatures</h2>
+            <div class="chart-container">
+                <canvas id="allTempsChart"></canvas>
+            </div>
+        </div>
+
         <!-- Main Temps -->
         <div class="card">
-            <h2>Temperatures</h2>
+            <h2>🌡️ Temperatures</h2>
             <div class="param-grid" id="temps-grid">
                 <!-- Populated by JS -->
             </div>
@@ -34,7 +283,7 @@
 
         <!-- Pressures -->
         <div class="card">
-            <h2>Pressures</h2>
+            <h2>⚡ Pressures</h2>
             <div class="param-grid" id="press-grid">
                 <!-- Populated by JS -->
             </div>
@@ -42,29 +291,47 @@
 
         <!-- System Status -->
         <div class="card">
-            <h2>System Status</h2>
+            <h2>⚙️ System Status</h2>
             <div class="param-grid">
-                <div class="param-label">Status Code:</div><div class="param-value" id="val-status">--</div>
-                <div class="param-label">Control Word:</div><div class="param-value" id="val-control">--</div>
-                <div class="param-label">Pump Speed:</div><div class="param-value" id="val-pump">--</div>
+                <div class="param-label">Status Code:</div>
+                <div class="param-value" id="val-status">--</div>
+                <div class="param-label">Control Word:</div>
+                <div class="param-value" id="val-control">--</div>
+                <div class="param-label">Pump Speed:</div>
+                <div class="param-value" id="val-pump">--</div>
+                <div class="param-label">Temp Setpoint:</div>
+                <div class="param-value" id="val-setpoint">--</div>
             </div>
         </div>
 
         <!-- Ambient -->
         <div class="card">
-            <h2>Ambient (ESP32)</h2>
+            <h2>🌡️ Ambient (ESP32)</h2>
             <div class="param-grid" id="ambient-grid">
-                <div class="param-label">S1 Temp:</div><div class="param-value" id="amb-s1-t">--</div>
-                <div class="param-label">S1 Hum:</div><div class="param-value" id="amb-s1-h">--</div>
-                <div class="param-label">S1 Dew:</div><div class="param-value" id="amb-s1-d">--</div>
-                <div class="param-label">S2 Temp:</div><div class="param-value" id="amb-s2-t">--</div>
-                <div class="param-label">Max Dew:</div><div class="param-value" id="amb-dew-max">--</div>
+                <div class="param-label">S1 Temp:</div>
+                <div class="param-value" id="amb-s1-t">--</div>
+                <div class="param-label">S1 Humidity:</div>
+                <div class="param-value" id="amb-s1-h">--</div>
+                <div class="param-label">S1 Dew Point:</div>
+                <div class="param-value" id="amb-s1-d">--</div>
+                <div class="param-label">S2 Temp:</div>
+                <div class="param-value" id="amb-s2-t">--</div>
+                <div class="param-label">Max Dew Point:</div>
+                <div class="param-value" id="amb-dew-max">--</div>
             </div>
         </div>
-        
+
+        <!-- Log History -->
+        <div class="card full-width">
+            <h2>📁 Run History</h2>
+            <div class="log-list" id="log-list">
+                <p style="color: var(--text-muted)">Loading...</p>
+            </div>
+        </div>
+
         <!-- Alarms -->
-        <div class="card" style="grid-column: 1 / -1;">
-            <h2>Alarms</h2>
+        <div class="card full-width">
+            <h2>🚨 Alarms</h2>
             <div class="alarm-grid" id="alarms-grid">
                 <!-- Populated by JS -->
             </div>
@@ -72,39 +339,135 @@
     </div>
 
     <div class="status-bar">
-        <span id="conn-status">Connecting...</span>
+        <span id="conn-status" class="disconnected">Connecting...</span>
         <span id="last-update">Last Update: --</span>
     </div>
 
     <script>
-        // Mapping of Address to Name (Subset for display)
+        // Data history for charts (max 60 points = 2 minutes at 2s interval)
+        const MAX_POINTS = 60;
+        const history = {
+            labels: [],
+            tt06: [],
+            ambTemp: [],
+            ambHum: [],
+            ambDew: [],
+            pt01: [],
+            pt03: [],
+            tt01: [], tt02: [], tt03: [], tt04: [], tt05: [], tt06: [], tt07: []
+        };
+
+        // Chart configurations
+        const chartOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: { duration: 0 },
+            scales: {
+                x: {
+                    display: true,
+                    ticks: { color: '#888', maxTicksLimit: 6 },
+                    grid: { color: 'rgba(255,255,255,0.1)' }
+                },
+                y: {
+                    ticks: { color: '#888' },
+                    grid: { color: 'rgba(255,255,255,0.1)' }
+                }
+            },
+            plugins: {
+                legend: {
+                    labels: { color: '#eee', boxWidth: 12 },
+                    position: 'top'
+                }
+            }
+        };
+
+        // Initialize charts
+        const tempChart = new Chart(document.getElementById('tempChart'), {
+            type: 'line',
+            data: {
+                labels: history.labels,
+                datasets: [{
+                    label: 'TT06 (°C)',
+                    data: history.tt06,
+                    borderColor: '#e94560',
+                    backgroundColor: 'rgba(233,69,96,0.1)',
+                    fill: true,
+                    tension: 0.3
+                }]
+            },
+            options: chartOptions
+        });
+
+        const ambientChart = new Chart(document.getElementById('ambientChart'), {
+            type: 'line',
+            data: {
+                labels: history.labels,
+                datasets: [
+                    { label: 'Temp (°C)', data: history.ambTemp, borderColor: '#4ade80', tension: 0.3 },
+                    { label: 'Humidity (%)', data: history.ambHum, borderColor: '#60a5fa', tension: 0.3 },
+                    { label: 'Dew Point (°C)', data: history.ambDew, borderColor: '#f59e0b', tension: 0.3 }
+                ]
+            },
+            options: chartOptions
+        });
+
+        const pressureChart = new Chart(document.getElementById('pressureChart'), {
+            type: 'line',
+            data: {
+                labels: history.labels,
+                datasets: [
+                    { label: 'PT01_CO2', data: history.pt01, borderColor: '#a78bfa', tension: 0.3 },
+                    { label: 'PT03_CO2', data: history.pt03, borderColor: '#f472b6', tension: 0.3 }
+                ]
+            },
+            options: chartOptions
+        });
+
+        const allTempsChart = new Chart(document.getElementById('allTempsChart'), {
+            type: 'line',
+            data: {
+                labels: history.labels,
+                datasets: [
+                    { label: 'TT01', data: history.tt01, borderColor: '#ef4444', borderWidth: 1.5, tension: 0.3 },
+                    { label: 'TT02', data: history.tt02, borderColor: '#f97316', borderWidth: 1.5, tension: 0.3 },
+                    { label: 'TT03', data: history.tt03, borderColor: '#eab308', borderWidth: 1.5, tension: 0.3 },
+                    { label: 'TT04', data: history.tt04, borderColor: '#22c55e', borderWidth: 1.5, tension: 0.3 },
+                    { label: 'TT05', data: history.tt05, borderColor: '#06b6d4', borderWidth: 1.5, tension: 0.3 },
+                    { label: 'TT06', data: history.tt06, borderColor: '#8b5cf6', borderWidth: 2, tension: 0.3 },
+                    { label: 'TT07', data: history.tt07, borderColor: '#ec4899', borderWidth: 1.5, tension: 0.3 }
+                ]
+            },
+            options: chartOptions
+        });
+
+        // Mapping of Address to Name
         const paramMap = {
             118: "TT01_R452A", 120: "TT02_R452A", 122: "TT03_R452A", 124: "TT04_R452A",
             126: "TT01_CO2", 128: "TT02_CO2", 130: "TT03_CO2", 132: "TT04_CO2", 134: "TT05_CO2", 136: "TT06_CO2", 138: "TT07_CO2",
             100: "PT01_R452A", 102: "PT03_R452A", 104: "PT04_R452A",
             106: "PT01_CO2", 108: "PT02_CO2", 110: "PT03_CO2", 112: "PT04_CO2", 114: "PT05_CO2", 116: "PT06_CO2",
-            200: "LP Speed"
+            200: "LP Speed", 204: "Temp SP"
         };
 
-        // Alarm Definitions (Address, Bit, Name) - Simplified list or full list
-        // We can fetch this from server or hardcode. Hardcoding for now based on app.py
+        // Alarm Definitions
         const alarmDefs = [
-            [300, 0, "ChTT_IOErr_FS"], [300, 1, "ChPT_IOErr_FS"], [300, 2, "PS_HP_FS"], [300, 3, "PS_LP_FS"],
+            [300, 0, "ChTT_IOErr"], [300, 1, "ChPT_IOErr"], [300, 2, "PS_HP_FS"], [300, 3, "PS_LP_FS"],
             [300, 4, "CP_HP_FS"], [300, 5, "CP_HP_W"], [300, 6, "CP_LP_FS"], [300, 7, "CP_LP_W"],
-            [302, 2, "DP01_CO2_FS"], [302, 3, "DP01_CO2_W"], [302, 4, "DP02_CO2_FS"], [302, 5, "DP02_CO2_W"],
-            [302, 10, "DT03_CO2_HT_FS"], [302, 11, "DT03_CO2_HT_W"],
-            [303, 2, "TT04_CO2_HT_FS"], [303, 3, "TT04_CO2_HT_TS"], [303, 4, "TT04_CO2_HT_W"]
+            [302, 2, "FL1_DP_High"], [302, 3, "FL1_DP_W"], [302, 4, "FL2_DP_High"], [302, 5, "FL2_DP_W"],
+            [302, 6, "LP1_DP_Low"], [302, 7, "LP1_DP_LowW"], [302, 8, "LP1_DP_High"], [302, 9, "LP1_DP_HighW"],
+            [302, 10, "DT03_HT"], [302, 11, "DT03_HT_W"],
+            [303, 0, "Acc_P_High"], [303, 1, "Acc_P_HighW"], [303, 14, "E-Stop"], [303, 15, "Interlock"]
         ];
 
         function init() {
-            // Init Grids
             const tGrid = document.getElementById('temps-grid');
             const pGrid = document.getElementById('press-grid');
-            
+
             for (const [addr, name] of Object.entries(paramMap)) {
+                if (name === "LP Speed" || name === "Temp SP") continue;
                 const divL = document.createElement('div'); divL.className = 'param-label'; divL.innerText = name + ":";
                 const divV = document.createElement('div'); divV.className = 'param-value'; divV.id = 'val-' + addr; divV.innerText = '--';
-                
+
                 if (name.startsWith("TT") || name.startsWith("DT") || name.startsWith("ST")) tGrid.append(divL, divV);
                 else if (name.startsWith("PT") || name.startsWith("DP")) pGrid.append(divL, divV);
             }
@@ -119,28 +482,53 @@
             });
         }
 
+        function addDataPoint(key, value) {
+            if (history[key]) {
+                history[key].push(value);
+                if (history[key].length > MAX_POINTS) history[key].shift();
+            }
+        }
+
         async function update() {
             try {
                 const res = await fetch('/api/data');
                 const data = await res.json();
-                
-                document.getElementById('conn-status').innerText = "Connected";
+
+                document.getElementById('conn-status').innerText = "🟢 Connected";
+                document.getElementById('conn-status').className = "connected";
                 document.getElementById('last-update').innerText = "Last Update: " + new Date().toLocaleTimeString();
+
+                // Add timestamp
+                const now = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                history.labels.push(now);
+                if (history.labels.length > MAX_POINTS) history.labels.shift();
 
                 if (data.modbus) {
                     const floats = data.modbus.floats || {};
                     const alarms = data.modbus.alarms || {};
-                    
+
                     // Update Params
                     for (const [addr, name] of Object.entries(paramMap)) {
                         const el = document.getElementById('val-' + addr);
                         if (el) el.innerText = floats[addr] !== undefined ? floats[addr].toFixed(2) : '--';
                     }
-                    
+
                     // Update Status
                     document.getElementById('val-status').innerText = data.modbus.status || '--';
                     document.getElementById('val-control').innerText = data.modbus.control || '--';
-                    document.getElementById('val-pump').innerText = floats[200] !== undefined ? floats[200].toFixed(1) : '--';
+                    document.getElementById('val-pump').innerText = floats[200] !== undefined ? floats[200].toFixed(1) + ' RPM' : '--';
+                    document.getElementById('val-setpoint').innerText = floats[204] !== undefined ? floats[204].toFixed(1) + ' °C' : '--';
+
+                    // Add to history
+                    addDataPoint('tt06', floats[136] || null);
+                    addDataPoint('pt01', floats[106] || null);
+                    addDataPoint('pt03', floats[110] || null);
+                    addDataPoint('tt01', floats[126] || null);
+                    addDataPoint('tt02', floats[128] || null);
+                    addDataPoint('tt03', floats[130] || null);
+                    addDataPoint('tt04', floats[132] || null);
+                    addDataPoint('tt05', floats[134] || null);
+                    addDataPoint('tt07', floats[138] || null);
 
                     // Update Alarms
                     alarmDefs.forEach(([addr, bit, name]) => {
@@ -150,28 +538,109 @@
                         if (isSet) el.classList.add('active');
                         else el.classList.remove('active');
                     });
+                } else {
+                    // Add null for missing data
+                    addDataPoint('tt06', null);
+                    addDataPoint('pt01', null);
+                    addDataPoint('pt03', null);
                 }
 
                 if (data.ambient) {
                     const s1 = data.ambient.s1 || [null, null, null];
                     const s2 = data.ambient.s2 || [null, null, null];
-                    document.getElementById('amb-s1-t').innerText = s1[0] !== null ? s1[0].toFixed(1) : '--';
+                    document.getElementById('amb-s1-t').innerText = s1[0] !== null ? s1[0].toFixed(1) + ' °C' : '--';
                     document.getElementById('amb-s1-h').innerText = s1[1] !== null ? s1[1].toFixed(0) + '%' : '--';
-                    document.getElementById('amb-s1-d').innerText = s1[2] !== null ? s1[2].toFixed(1) : '--';
-                    document.getElementById('amb-s2-t').innerText = s2[0] !== null ? s2[0].toFixed(1) : '--';
-                    document.getElementById('amb-dew-max').innerText = data.ambient.dew_max !== null ? data.ambient.dew_max.toFixed(2) : '--';
+                    document.getElementById('amb-s1-d').innerText = s1[2] !== null ? s1[2].toFixed(1) + ' °C' : '--';
+                    document.getElementById('amb-s2-t').innerText = s2[0] !== null ? s2[0].toFixed(1) + ' °C' : '--';
+                    document.getElementById('amb-dew-max').innerText = data.ambient.dew_max !== null ? data.ambient.dew_max.toFixed(2) + ' °C' : '--';
+
+                    // Add to history
+                    addDataPoint('ambTemp', s1[0]);
+                    addDataPoint('ambHum', s1[1]);
+                    addDataPoint('ambDew', s1[2]);
+                } else {
+                    addDataPoint('ambTemp', null);
+                    addDataPoint('ambHum', null);
+                    addDataPoint('ambDew', null);
                 }
+
+                // Update all charts
+                tempChart.update('none');
+                ambientChart.update('none');
+                pressureChart.update('none');
+                allTempsChart.update('none');
 
             } catch (e) {
                 console.error(e);
-                document.getElementById('conn-status').innerText = "Connection Error";
+                document.getElementById('conn-status').innerText = "🔴 Connection Error";
+                document.getElementById('conn-status').className = "disconnected";
             }
-            
+
             setTimeout(update, 2000);
+        }
+
+        // Load Log History
+        async function loadLogs() {
+            const logList = document.getElementById('log-list');
+            try {
+                const res = await fetch('/api/logs');
+                const data = await res.json();
+
+                if (data.error) {
+                    logList.innerHTML = `<p style="color: var(--highlight)">${data.error}</p>`;
+                    return;
+                }
+
+                if (!data.runs || data.runs.length === 0) {
+                    logList.innerHTML = '<p style="color: var(--text-muted)">No runs found</p>';
+                    return;
+                }
+
+                logList.innerHTML = '';
+                data.runs.forEach(run => {
+                    const runDiv = document.createElement('div');
+                    runDiv.className = 'log-run';
+
+                    const fileCount = run.files.length;
+                    const imageCount = run.files.filter(f => f.is_image).length;
+
+                    runDiv.innerHTML = `
+                        <div class="log-run-header" onclick="this.parentElement.classList.toggle('expanded')">
+                            <span>📁 ${run.name}</span>
+                            <span style="color: var(--text-muted); font-size: 0.85em;">
+                                ${fileCount} files ${imageCount > 0 ? `(${imageCount} 📷)` : ''}
+                            </span>
+                        </div>
+                        <div class="log-run-files">
+                            ${run.files.map(f => `
+                                <div class="log-file ${f.is_image ? 'image' : ''}">
+                                    <a href="/api/logs/${run.name}/${f.name}" target="_blank">
+                                        ${f.is_image ? '🖼️' : '📄'} ${f.name}
+                                    </a>
+                                    <span class="size">${formatSize(f.size)}</span>
+                                </div>
+                                ${f.is_image ? `<img src="/api/logs/${run.name}/${f.name}" class="image-preview" alt="${f.name}">` : ''}
+                            `).join('')}
+                        </div>
+                    `;
+                    logList.appendChild(runDiv);
+                });
+            } catch (e) {
+                console.error('Error loading logs:', e);
+                logList.innerHTML = '<p style="color: var(--highlight)">Error loading logs</p>';
+            }
+        }
+
+        function formatSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
         }
 
         init();
         update();
+        loadLogs(); // Load log history on page load
     </script>
 </body>
+
 </html>

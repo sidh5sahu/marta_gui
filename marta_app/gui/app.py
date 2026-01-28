@@ -17,11 +17,12 @@ import queue # Added: Required for queue.Queue()
 import requests # Added: Required for ESP32 connection check
 import socket # Added: Required for network testing
 
-from ..config import load_config
+from ..config import load_config, save_config
 from ..backend.modbus import get_modbus_client, write_float, write_control_word, REGISTER_PUMP_SPEED, REGISTER_TEMP_SETPOINT
 from ..backend.logger import UnifiedEventLogger
 from ..backend.poller import DataPoller, AmbientPoller
 from ..web.server import update_pollers # Added: Import web server update function
+from .config_window import ConfigWindow
 
 class MartaGUI:
     def __init__(self, root):
@@ -41,50 +42,51 @@ class MartaGUI:
         style = ttk.Style()
         style.theme_use('clam') 
 
+        # --- MENU BAR ---
+        self.menubar = tk.Menu(root)
+        root.config(menu=self.menubar)
+        
+        # File Menu
+        file_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(label="Settings", command=self.open_settings)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self._on_close)
+
         # Create Notebook (Tabs)
         self.notebook = ttk.Notebook(root)
         self.notebook.grid(row=0, column=0, columnspan=8, sticky="nsew", padx=5, pady=5)
         
         self.tab_main = ttk.Frame(self.notebook)
         self.tab_marta = ttk.Frame(self.notebook)
+        self.tab_settings = ttk.Frame(self.notebook)
         
         self.notebook.add(self.tab_main, text="Controller")
         self.notebook.add(self.tab_marta, text="Marta")
+        self.notebook.add(self.tab_settings, text="Settings")
         
         # --- CONTROLLER TAB CONTENT ---
-        # Row 0: Marta IP
-        ttk.Label(self.tab_main, text="MARTA IP:").grid(row=0, column=0, sticky="e", padx=5, pady=2)
-        self.e_ip = ttk.Entry(self.tab_main, width=18); self.e_ip.insert(0, self.config.get("marta_ip", "10.4.133.77")); self.e_ip.grid(row=0,column=1,sticky="w", pady=2)
-        ttk.Button(self.tab_main, text="Connect", command=self.connect).grid(row=0, column=4, padx=5, pady=2, sticky="w")
-        self.lab_conn = ttk.Label(self.tab_main, text="Disconnected", foreground="red", width=25, anchor="w"); self.lab_conn.grid(row=0, column=5, columnspan=2, sticky="w", pady=2)
-
-        # Row 1: ESP32 connect
-        ttk.Label(self.tab_main, text="ESP32 IP:").grid(row=1, column=0, sticky="e", padx=5, pady=2)
-        self.e_esp_ip = ttk.Entry(self.tab_main, width=18); self.e_esp_ip.insert(0, self.config.get("esp32_ip", "10.4.135.152")); self.e_esp_ip.grid(row=1,column=1,sticky="w", pady=2)
-        ttk.Button(self.tab_main, text="Connect ESP32", command=self.connect_esp32).grid(row=1, column=4, padx=5, pady=2, sticky="w")
-        self.lab_esp = ttk.Label(self.tab_main, text="ESP32: Disconnected", foreground="red", width=25, anchor="w"); self.lab_esp.grid(row=1, column=5, columnspan=2, sticky="w", pady=2)
-
-        # Row 1.5: Network Test
-        ttk.Button(self.tab_main, text="Test Network", command=self.test_network_connection).grid(row=1, column=7, padx=5, pady=2, sticky="e")
-
-        # Row 2: Run Sequence File
-        # Row 2: Run Sequence File
-        ttk.Label(self.tab_main, text="Run Seq. File:").grid(row=2, column=0, sticky="e", padx=5, pady=2)
-        self.e_seq_file = ttk.Entry(self.tab_main, width=18)
-        self.e_seq_file.insert(0, self.config.get("paths", {}).get("run_sequence_file", ""))
-        self.e_seq_file.grid(row=2, column=1, sticky="w", pady=2)
-        ttk.Button(self.tab_main, text="Browse", command=self._browse_seq_file).grid(row=2, column=4, padx=5, pady=2, sticky="w")
-
-        # Row 3: Base Log Directory
-        ttk.Label(self.tab_main, text="Base Log Dir:").grid(row=3, column=0, sticky="e", padx=5, pady=2)
-        self.e_log_dir = ttk.Entry(self.tab_main, width=18)
-        self.e_log_dir.insert(0, self.config.get("paths", {}).get("base_log_dir", ""))
-        self.e_log_dir.grid(row=3, column=1, sticky="w", pady=2)
-        ttk.Button(self.tab_main, text="Browse", command=self._browse_log_dir).grid(row=3, column=4, padx=5, pady=2, sticky="w")
+        # Store IP values for internal use (loaded from config, editable only in Settings)
+        self.e_ip_value = self.config.get("marta_ip", "10.4.133.77")
+        self.e_esp_ip_value = self.config.get("esp32_ip", "10.4.135.152")
         
-        # Row 4: Control Buttons
+        # Row 0: Connection Status and Buttons
+        conn_frame = ttk.Frame(self.tab_main)
+        conn_frame.grid(row=0, column=0, columnspan=8, pady=5, sticky="w")
+        
+        ttk.Button(conn_frame, text="Connect MARTA", command=self.connect).pack(side=tk.LEFT, padx=5)
+        self.lab_conn = ttk.Label(conn_frame, text="MARTA: Disconnected", foreground="red", width=25, anchor="w")
+        self.lab_conn.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(conn_frame, text="Connect ESP32", command=self.connect_esp32).pack(side=tk.LEFT, padx=5)
+        self.lab_esp = ttk.Label(conn_frame, text="ESP32: Disconnected", foreground="red", width=25, anchor="w")
+        self.lab_esp.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(conn_frame, text="Test Network", command=self.test_network_connection).pack(side=tk.LEFT, padx=5)
+        
+        # Row 1: Control Buttons
         btn_frame = ttk.Frame(self.tab_main)
-        btn_frame.grid(row=4, column=0, columnspan=8, pady=10, sticky="w")
+        btn_frame.grid(row=1, column=0, columnspan=8, pady=10, sticky="w")
         self.btn_start_chiller = ttk.Button(btn_frame, text="Start Chiller", command=self.start_chiller, state=tk.DISABLED)
         self.btn_stop_chiller  = ttk.Button(btn_frame, text="Stop Chiller",  command=self.stop_chiller,  state=tk.DISABLED)
         self.btn_start_co2     = ttk.Button(btn_frame, text="Start CO₂",     command=self.start_co2,     state=tk.DISABLED)
@@ -93,47 +95,47 @@ class MartaGUI:
         for btn in [self.btn_start_chiller, self.btn_stop_chiller, self.btn_start_co2, self.btn_stop_co2, self.btn_stop_all]:
             btn.pack(side=tk.LEFT, padx=5)
 
-        # Row 5-9: Params
+        # Initialize runtime params from config (editable in Settings tab only)
         defaults = self.config.get("cycle_defaults", {})
         self.var_max   = tk.StringVar(value=str(defaults.get("max_temp", "15")))
         self.var_min   = tk.StringVar(value=str(defaults.get("min_temp", "10")))
         self.var_cycle = tk.StringVar(value=str(defaults.get("cycles", "2")))
         self.var_dwell = tk.StringVar(value=str(defaults.get("dwell_s", "60")))
         self.var_pump  = tk.StringVar(value=str(self.config.get("safety_limits", {}).get("pump_rpm_default", "6000")))
-        self._param_row(5, "Max Temp (°C):", self.var_max,   self.update_max)
-        self._param_row(6, "Min Temp (°C):", self.var_min,   self.update_min)
-        self._param_row(7, "# Cycles:",       self.var_cycle, self.update_cycles)
-        self._param_row(8, "Dwell (s):",       self.var_dwell, self.update_dwell)
-        self._param_row(9, "Pump RPM:",       self.var_pump,  self.update_pump)
 
-        # Row 10: displays
-        ttk.Label(self.tab_main, text="Active Setpoint:").grid(row=10, column=0, sticky="e", padx=5, pady=5)
+        # Row 2: displays
+        ttk.Label(self.tab_main, text="Active Setpoint:").grid(row=2, column=0, sticky="e", padx=5, pady=5)
         self.var_setpoint_display = tk.StringVar(value="--")
-        ttk.Entry(self.tab_main, textvariable=self.var_setpoint_display, width=10, state="readonly").grid(row=10, column=1, sticky="w", pady=5)
-        ttk.Label(self.tab_main, text="TT06:").grid(row=10, column=2, sticky="e", padx=5, pady=5)
+        ttk.Entry(self.tab_main, textvariable=self.var_setpoint_display, width=10, state="readonly").grid(row=2, column=1, sticky="w", pady=5)
+        ttk.Label(self.tab_main, text="TT06:").grid(row=2, column=2, sticky="e", padx=5, pady=5)
         self.var_tt06_display = tk.StringVar(value="--")
-        ttk.Entry(self.tab_main, textvariable=self.var_tt06_display, width=10, state="readonly").grid(row=10, column=3, sticky="w", pady=5)
-        self.lbl_status = tk.Label(self.tab_main, text="●", fg="red", font=("Arial", 14)); self.lbl_status.grid(row=10, column=4, sticky="w", padx=5, pady=5)
+        ttk.Entry(self.tab_main, textvariable=self.var_tt06_display, width=10, state="readonly").grid(row=2, column=3, sticky="w", pady=5)
+        self.lbl_status = tk.Label(self.tab_main, text="●", fg="red", font=("Arial", 14)); self.lbl_status.grid(row=2, column=4, sticky="w", padx=5, pady=5)
 
-        # Row 11: Stopwatch
-        ttk.Label(self.tab_main, text="Cycle Timer:").grid(row=11, column=0, sticky="e", padx=5, pady=2)
+        # Row 3: Stopwatch and Current Run
+        ttk.Label(self.tab_main, text="Cycle Timer:").grid(row=3, column=0, sticky="e", padx=5, pady=2)
         self.var_stopwatch_display = tk.StringVar(value="00:00")
         self.lab_stopwatch = ttk.Entry(self.tab_main, textvariable=self.var_stopwatch_display, width=10, state="readonly")
-        self.lab_stopwatch.grid(row=11, column=1, sticky="w", pady=2)
-
-        # Row 12: Ambient S1 & S2
-        ttk.Label(self.tab_main, text="S1 (AM2315C):").grid(row=12, column=0, sticky="e", padx=5, pady=2)
-        self.var_s1 = tk.StringVar(value="--"); ttk.Entry(self.tab_main, textvariable=self.var_s1, width=22, state="readonly").grid(row=12,column=1,sticky="w", pady=2)
+        self.lab_stopwatch.grid(row=3, column=1, sticky="w", pady=2)
         
-        ttk.Label(self.tab_main, text="S2 (MAX6675):").grid(row=12, column=2, sticky="e", padx=5, pady=2)
-        self.var_s2 = tk.StringVar(value="--"); ttk.Entry(self.tab_main, textvariable=self.var_s2, width=22, state="readonly").grid(row=12,column=3,sticky="w", pady=2)
+        ttk.Label(self.tab_main, text="Current Run:").grid(row=3, column=2, sticky="e", padx=5, pady=2)
+        self.var_current_run = tk.StringVar(value="Not connected")
+        self.entry_current_run = ttk.Entry(self.tab_main, textvariable=self.var_current_run, width=30, state="readonly")
+        self.entry_current_run.grid(row=3, column=3, columnspan=3, sticky="w", pady=2)
 
-        ttk.Label(self.tab_main, text="Dew Max:").grid(row=12, column=4, sticky="e", padx=5, pady=2)
-        self.var_dewavg = tk.StringVar(value="--"); ttk.Entry(self.tab_main, textvariable=self.var_dewavg, width=10, state="readonly").grid(row=12, column=5, sticky="w", pady=2)
+        # Row 4: Ambient S1 & S2
+        ttk.Label(self.tab_main, text="S1 (AM2315C):").grid(row=4, column=0, sticky="e", padx=5, pady=2)
+        self.var_s1 = tk.StringVar(value="--"); ttk.Entry(self.tab_main, textvariable=self.var_s1, width=22, state="readonly").grid(row=4,column=1,sticky="w", pady=2)
+        
+        ttk.Label(self.tab_main, text="S2 (MAX6675):").grid(row=4, column=2, sticky="e", padx=5, pady=2)
+        self.var_s2 = tk.StringVar(value="--"); ttk.Entry(self.tab_main, textvariable=self.var_s2, width=22, state="readonly").grid(row=4,column=3,sticky="w", pady=2)
 
-        # Row 13: plots & logs
+        ttk.Label(self.tab_main, text="Dew Max:").grid(row=4, column=4, sticky="e", padx=5, pady=2)
+        self.var_dewavg = tk.StringVar(value="--"); ttk.Entry(self.tab_main, textvariable=self.var_dewavg, width=10, state="readonly").grid(row=4, column=5, sticky="w", pady=2)
+
+        # Row 5: plots & logs
         plot_frame = ttk.Frame(self.tab_main)
-        plot_frame.grid(row=13, column=0, columnspan=6, pady=2)
+        plot_frame.grid(row=5, column=0, columnspan=6, pady=2)
         ttk.Button(plot_frame, text="Marta Temp",         command=self.open_all_temps_plot).pack(side=tk.LEFT, padx=5)
         ttk.Button(plot_frame, text="ColdBox Temp",       command=self.open_ambient_temp_plot).pack(side=tk.LEFT, padx=5)
         ttk.Button(plot_frame, text="ColdBox Humidity",   command=self.open_humidity_plot).pack(side=tk.LEFT, padx=5)
@@ -145,6 +147,9 @@ class MartaGUI:
         
         # --- MARTA TAB CONTENT ---
         self._init_marta_tab()
+        
+        # --- SETTINGS TAB CONTENT ---
+        self._init_settings_tab()
         
         # --- BOTTOM ROW (Log Box) ---
         root.grid_rowconfigure(1, weight=1) 
@@ -304,20 +309,30 @@ class MartaGUI:
         r = start_r + 16 # Move below table
         
         # Section 2: Alarms
-        ttk.Label(self.scrollable_frame, text="--- ALARMS ---", font=("Arial", 10, "bold")).grid(row=r, column=0, columnspan=4, pady=10, sticky="w"); r+=1
+        ttk.Label(self.scrollable_frame, text="--- ALARMS ---", font=("Arial", 10, "bold")).grid(row=r, column=0, columnspan=8, pady=10, sticky="w"); r+=1
         
-        # Helper for alarms
+        # Helper for alarms - now with 6 columns and consistent sizing
         def add_alarm_grid(defs, start_row):
             cr = start_row
             cc = 0
+            max_cols = 6  # 6 columns for better fit
             for addr, bit, name, action in defs:
-                lbl = tk.Label(self.scrollable_frame, text=name, bg="lightgray", width=20, anchor="w", padx=2)
-                lbl.grid(row=cr, column=cc, padx=2, pady=1, sticky="ew")
+                # Truncate long names for display
+                display_name = name if len(name) <= 25 else name[:22] + "..."
+                lbl = tk.Label(self.scrollable_frame, text=display_name, bg="lightgray", 
+                              width=25, anchor="w", padx=4, pady=2, relief="groove",
+                              font=("Arial", 8))
+                lbl.grid(row=cr, column=cc, padx=1, pady=1, sticky="ew")
                 self.alarm_vars[(addr, bit)] = lbl
                 self.alarm_actions[(addr, bit)] = action
                 
+                # Create tooltip for long names
+                if len(name) > 25:
+                    lbl.bind("<Enter>", lambda e, n=name: e.widget.config(bg="lightyellow"))
+                    lbl.bind("<Leave>", lambda e: e.widget.config(bg="lightgray" if not getattr(e.widget, 'is_active', False) else "red"))
+                
                 cc += 1
-                if cc > 3: # 4 columns
+                if cc >= max_cols:
                     cc = 0
                     cr += 1
             return cr + 1
@@ -341,6 +356,277 @@ class MartaGUI:
         ttk.Label(self.scrollable_frame, text="Control Word (305):").grid(row=r, column=2, sticky="e")
         self.var_control_word = tk.StringVar(value="--")
         ttk.Entry(self.scrollable_frame, textvariable=self.var_control_word, width=10, state="readonly").grid(row=r, column=3, sticky="w")
+
+    def _init_settings_tab(self):
+        """Initialize the Settings tab content."""
+        from tkinter import filedialog as fd
+        
+        # Scrollable frame for settings
+        canvas = tk.Canvas(self.tab_settings)
+        scrollbar = ttk.Scrollbar(self.tab_settings, orient="vertical", command=canvas.yview)
+        settings_frame = ttk.Frame(canvas, padding="10")
+        
+        settings_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=settings_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        row = 0
+        
+        # --- MARTA Section ---
+        ttk.Label(settings_frame, text="MARTA", font=("Arial", 11, "bold")).grid(
+            row=row, column=0, sticky="w", pady=(10, 5))
+        row += 1
+        
+        ttk.Label(settings_frame, text="IP Address:").grid(row=row, column=0, sticky="e", padx=5, pady=2)
+        self.cfg_marta_ip = ttk.Entry(settings_frame, width=30)
+        self.cfg_marta_ip.insert(0, self.config.get("marta_ip", ""))
+        self.cfg_marta_ip.grid(row=row, column=1, sticky="w", pady=2)
+        row += 1
+        
+        ttk.Separator(settings_frame, orient="horizontal").grid(
+            row=row, column=0, columnspan=3, sticky="ew", pady=10)
+        row += 1
+        
+        # --- ESP32 Section ---
+        ttk.Label(settings_frame, text="ESP32", font=("Arial", 11, "bold")).grid(
+            row=row, column=0, sticky="w", pady=(10, 5))
+        row += 1
+        
+        ttk.Label(settings_frame, text="IP Address:").grid(row=row, column=0, sticky="e", padx=5, pady=2)
+        self.cfg_esp_ip = ttk.Entry(settings_frame, width=30)
+        self.cfg_esp_ip.insert(0, self.config.get("esp32_ip", ""))
+        self.cfg_esp_ip.grid(row=row, column=1, sticky="w", pady=2)
+        row += 1
+        
+        ttk.Separator(settings_frame, orient="horizontal").grid(
+            row=row, column=0, columnspan=3, sticky="ew", pady=10)
+        row += 1
+        
+        # --- InfluxDB Section ---
+        ttk.Label(settings_frame, text="InfluxDB", font=("Arial", 11, "bold")).grid(
+            row=row, column=0, sticky="w", pady=(10, 5))
+        row += 1
+        
+        influx = self.config.get("influxdb", {})
+        
+        ttk.Label(settings_frame, text="URL:").grid(row=row, column=0, sticky="e", padx=5, pady=2)
+        self.cfg_influx_url = ttk.Entry(settings_frame, width=30)
+        self.cfg_influx_url.insert(0, influx.get("url", "http://localhost:8086"))
+        self.cfg_influx_url.grid(row=row, column=1, sticky="w", pady=2)
+        row += 1
+        
+        ttk.Label(settings_frame, text="Token:").grid(row=row, column=0, sticky="e", padx=5, pady=2)
+        self.cfg_influx_token = ttk.Entry(settings_frame, width=30, show="*")
+        self.cfg_influx_token.insert(0, influx.get("token", ""))
+        self.cfg_influx_token.grid(row=row, column=1, sticky="w", pady=2)
+        row += 1
+        
+        ttk.Label(settings_frame, text="Organization:").grid(row=row, column=0, sticky="e", padx=5, pady=2)
+        self.cfg_influx_org = ttk.Entry(settings_frame, width=30)
+        self.cfg_influx_org.insert(0, influx.get("org", ""))
+        self.cfg_influx_org.grid(row=row, column=1, sticky="w", pady=2)
+        row += 1
+        
+        ttk.Label(settings_frame, text="Bucket:").grid(row=row, column=0, sticky="e", padx=5, pady=2)
+        self.cfg_influx_bucket = ttk.Entry(settings_frame, width=30)
+        self.cfg_influx_bucket.insert(0, influx.get("bucket", ""))
+        self.cfg_influx_bucket.grid(row=row, column=1, sticky="w", pady=2)
+        row += 1
+        
+        ttk.Label(settings_frame, text="Enabled:").grid(row=row, column=0, sticky="e", padx=5, pady=2)
+        self.cfg_influx_enabled = tk.BooleanVar(value=influx.get("enabled", False))
+        ttk.Checkbutton(settings_frame, variable=self.cfg_influx_enabled).grid(row=row, column=1, sticky="w", pady=2)
+        row += 1
+        
+        ttk.Separator(settings_frame, orient="horizontal").grid(
+            row=row, column=0, columnspan=3, sticky="ew", pady=10)
+        row += 1
+        
+        # --- Paths Section ---
+        ttk.Label(settings_frame, text="Paths", font=("Arial", 11, "bold")).grid(
+            row=row, column=0, sticky="w", pady=(10, 5))
+        row += 1
+        
+        paths = self.config.get("paths", {})
+        
+        ttk.Label(settings_frame, text="Base Log Dir:").grid(row=row, column=0, sticky="e", padx=5, pady=2)
+        path_frame2 = ttk.Frame(settings_frame)
+        path_frame2.grid(row=row, column=1, sticky="w", pady=2)
+        self.cfg_log_dir = ttk.Entry(path_frame2, width=25)
+        self.cfg_log_dir.insert(0, paths.get("base_log_dir", ""))
+        self.cfg_log_dir.pack(side=tk.LEFT)
+        ttk.Button(path_frame2, text="Browse", width=6,
+                   command=lambda: self._browse_for_entry(self.cfg_log_dir, "dir")).pack(side=tk.LEFT, padx=2)
+        row += 1
+        
+        ttk.Separator(settings_frame, orient="horizontal").grid(
+            row=row, column=0, columnspan=3, sticky="ew", pady=10)
+        row += 1
+        
+        # --- Cycle Defaults Section ---
+        ttk.Label(settings_frame, text="Cycle Defaults", font=("Arial", 11, "bold")).grid(
+            row=row, column=0, sticky="w", pady=(10, 5))
+        row += 1
+        
+        cycle_defaults = self.config.get("cycle_defaults", {})
+        
+        ttk.Label(settings_frame, text="Max Temp (°C):").grid(row=row, column=0, sticky="e", padx=5, pady=2)
+        self.cfg_max_temp = ttk.Entry(settings_frame, width=10)
+        self.cfg_max_temp.insert(0, str(cycle_defaults.get("max_temp", 15)))
+        self.cfg_max_temp.grid(row=row, column=1, sticky="w", pady=2)
+        row += 1
+        
+        ttk.Label(settings_frame, text="Min Temp (°C):").grid(row=row, column=0, sticky="e", padx=5, pady=2)
+        self.cfg_min_temp = ttk.Entry(settings_frame, width=10)
+        self.cfg_min_temp.insert(0, str(cycle_defaults.get("min_temp", 10)))
+        self.cfg_min_temp.grid(row=row, column=1, sticky="w", pady=2)
+        row += 1
+        
+        ttk.Label(settings_frame, text="Cycles:").grid(row=row, column=0, sticky="e", padx=5, pady=2)
+        self.cfg_cycles = ttk.Entry(settings_frame, width=10)
+        self.cfg_cycles.insert(0, str(cycle_defaults.get("cycles", 2)))
+        self.cfg_cycles.grid(row=row, column=1, sticky="w", pady=2)
+        row += 1
+        
+        ttk.Label(settings_frame, text="Dwell (s):").grid(row=row, column=0, sticky="e", padx=5, pady=2)
+        self.cfg_dwell = ttk.Entry(settings_frame, width=10)
+        self.cfg_dwell.insert(0, str(cycle_defaults.get("dwell_s", 60)))
+        self.cfg_dwell.grid(row=row, column=1, sticky="w", pady=2)
+        row += 1
+        
+        ttk.Label(settings_frame, text="Pump RPM:").grid(row=row, column=0, sticky="e", padx=5, pady=2)
+        self.cfg_pump_rpm = ttk.Entry(settings_frame, width=10)
+        self.cfg_pump_rpm.insert(0, str(self.config.get("safety_limits", {}).get("pump_rpm_default", 6000)))
+        self.cfg_pump_rpm.grid(row=row, column=1, sticky="w", pady=2)
+        row += 1
+        
+        # --- Save Button ---
+        btn_frame = ttk.Frame(settings_frame)
+        btn_frame.grid(row=row, column=0, columnspan=3, pady=20)
+        
+        ttk.Button(btn_frame, text="Save Settings", command=self._save_settings_from_tab, width=15).pack(side=tk.LEFT, padx=10)
+        ttk.Button(btn_frame, text="Reload", command=self._reload_settings_tab, width=10).pack(side=tk.LEFT, padx=10)
+
+    def _browse_for_entry(self, entry_widget, browse_type):
+        """Browse for file or directory and update entry."""
+        from tkinter import filedialog
+        if browse_type == "file":
+            path = filedialog.askopenfilename(
+                title="Select File",
+                filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
+            )
+        else:
+            path = filedialog.askdirectory(title="Select Directory")
+        
+        if path:
+            entry_widget.delete(0, tk.END)
+            entry_widget.insert(0, path)
+
+    def _save_settings_from_tab(self):
+        """Save settings from the Settings tab."""
+        # Update config dict
+        self.config["marta_ip"] = self.cfg_marta_ip.get().strip()
+        self.config["esp32_ip"] = self.cfg_esp_ip.get().strip()
+        
+        if "influxdb" not in self.config:
+            self.config["influxdb"] = {}
+        self.config["influxdb"]["url"] = self.cfg_influx_url.get().strip()
+        self.config["influxdb"]["token"] = self.cfg_influx_token.get().strip()
+        self.config["influxdb"]["org"] = self.cfg_influx_org.get().strip()
+        self.config["influxdb"]["bucket"] = self.cfg_influx_bucket.get().strip()
+        self.config["influxdb"]["enabled"] = self.cfg_influx_enabled.get()
+        
+        if "paths" not in self.config:
+            self.config["paths"] = {}
+        self.config["paths"]["base_log_dir"] = self.cfg_log_dir.get().strip()
+        
+        if "cycle_defaults" not in self.config:
+            self.config["cycle_defaults"] = {}
+        try:
+            self.config["cycle_defaults"]["max_temp"] = int(self.cfg_max_temp.get())
+            self.config["cycle_defaults"]["min_temp"] = int(self.cfg_min_temp.get())
+            self.config["cycle_defaults"]["cycles"] = int(self.cfg_cycles.get())
+            self.config["cycle_defaults"]["dwell_s"] = int(self.cfg_dwell.get())
+        except ValueError:
+            messagebox.showerror("Error", "Cycle defaults must be integers.")
+            return
+        
+        # Pump RPM
+        if "safety_limits" not in self.config:
+            self.config["safety_limits"] = {}
+        try:
+            self.config["safety_limits"]["pump_rpm_default"] = int(self.cfg_pump_rpm.get())
+        except ValueError:
+            messagebox.showerror("Error", "Pump RPM must be an integer.")
+            return
+        
+        # Save to file
+        save_config(self.config)
+        self.log("Configuration saved.")
+        
+        # Update runtime params in Controller tab
+        defaults = self.config.get("cycle_defaults", {})
+        self.var_max.set(str(defaults.get("max_temp", 15)))
+        self.var_min.set(str(defaults.get("min_temp", 10)))
+        self.var_cycle.set(str(defaults.get("cycles", 2)))
+        self.var_dwell.set(str(defaults.get("dwell_s", 60)))
+        self.var_pump.set(str(self.config.get("safety_limits", {}).get("pump_rpm_default", 6000)))
+        
+        messagebox.showinfo("Settings", "Configuration saved successfully!")
+
+    def _reload_settings_tab(self):
+        """Reload settings from config file into the Settings tab."""
+        from ..config import load_config
+        self.config = load_config()
+        
+        # MARTA
+        self.cfg_marta_ip.delete(0, tk.END)
+        self.cfg_marta_ip.insert(0, self.config.get("marta_ip", ""))
+        
+        # ESP32
+        self.cfg_esp_ip.delete(0, tk.END)
+        self.cfg_esp_ip.insert(0, self.config.get("esp32_ip", ""))
+        
+        # InfluxDB
+        influx = self.config.get("influxdb", {})
+        self.cfg_influx_url.delete(0, tk.END)
+        self.cfg_influx_url.insert(0, influx.get("url", ""))
+        self.cfg_influx_token.delete(0, tk.END)
+        self.cfg_influx_token.insert(0, influx.get("token", ""))
+        self.cfg_influx_org.delete(0, tk.END)
+        self.cfg_influx_org.insert(0, influx.get("org", ""))
+        self.cfg_influx_bucket.delete(0, tk.END)
+        self.cfg_influx_bucket.insert(0, influx.get("bucket", ""))
+        self.cfg_influx_enabled.set(influx.get("enabled", False))
+        
+        # Paths
+        paths = self.config.get("paths", {})
+        self.cfg_log_dir.delete(0, tk.END)
+        self.cfg_log_dir.insert(0, paths.get("base_log_dir", ""))
+        
+        # Cycle Defaults
+        cycle_defaults = self.config.get("cycle_defaults", {})
+        self.cfg_max_temp.delete(0, tk.END)
+        self.cfg_max_temp.insert(0, str(cycle_defaults.get("max_temp", 15)))
+        self.cfg_min_temp.delete(0, tk.END)
+        self.cfg_min_temp.insert(0, str(cycle_defaults.get("min_temp", 10)))
+        self.cfg_cycles.delete(0, tk.END)
+        self.cfg_cycles.insert(0, str(cycle_defaults.get("cycles", 2)))
+        self.cfg_dwell.delete(0, tk.END)
+        self.cfg_dwell.insert(0, str(cycle_defaults.get("dwell_s", 60)))
+        
+        # Pump RPM
+        self.cfg_pump_rpm.delete(0, tk.END)
+        self.cfg_pump_rpm.insert(0, str(self.config.get("safety_limits", {}).get("pump_rpm_default", 6000)))
+        
+        self.log("Settings reloaded from config file.")
 
     def _process_gui_updates(self):
         try:
@@ -388,43 +674,19 @@ class MartaGUI:
         self.log_q.put(line)
         print(line)
 
-    # --- Browse and Reporting Methods ---
-    def _browse_seq_file(self):
-        path = filedialog.askopenfilename(
-            title="Select Run Sequence File",
-            filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
-        )
-        if path:
-            self.e_seq_file.delete(0, tk.END)
-            self.e_seq_file.insert(0, path)
-
-    def _browse_log_dir(self):
-        path = filedialog.askdirectory(title="Select Base Log Directory")
-        if path:
-            self.e_log_dir.delete(0, tk.END)
-            self.e_log_dir.insert(0, path)
-
+    # --- Run Sequence Processing ---
     def _process_run_sequence(self):
-        seq_file_path = self.e_seq_file.get()
-        base_log_dir = self.e_log_dir.get()
+        base_log_dir = self.config.get("paths", {}).get("base_log_dir", "")
         
-        if not seq_file_path or not base_log_dir:
-            self.log("Error: Run Sequence File and Base Log Dir must be set.")
-            messagebox.showerror("Setup Error", "Please set the Run Sequence File and Base Log Directory paths.")
+        if not base_log_dir:
+            self.log("Error: Base Log Dir must be set in Settings.")
+            messagebox.showerror("Setup Error", "Please set the Base Log Directory in the Settings tab.")
             return False
 
         try:
-            with open(seq_file_path, "r") as f:
-                last_run_name = f.read().strip()
-            
-            match = re.match(r"run_(\d+)_.*", last_run_name)
-            if match:
-                last_run_num = int(match.group(1))
-                new_run_num = last_run_num + 1
-            else:
-                self.log(f"Warning: Could not parse '{last_run_name}', starting at run 01.")
-                new_run_num = 1
-                
+            # Get last run number from config (no external file needed)
+            last_run_num = self.config.get("last_run_number", 0)
+            new_run_num = last_run_num + 1
             new_run_num_str = f"{new_run_num:02d}"
             
             now = datetime.now()
@@ -437,17 +699,21 @@ class MartaGUI:
             self.current_run_dir = os.path.join(base_log_dir, self.current_run_name_full)
             os.makedirs(self.current_run_dir, exist_ok=True)
             self.log(f"Created new run directory: {self.current_run_dir}")
+            
+            # Update UI to show current run
+            self.var_current_run.set(self.current_run_name_full)
 
             self.report_file_path = os.path.join(self.current_run_dir, f"{self.current_run_name_short}.md")
             
-            with open(seq_file_path, "w") as f:
-                f.write(self.current_run_name_full)
+            # Save new run number to config
+            self.config["last_run_number"] = new_run_num
+            save_config(self.config)
             
             return True
 
         except Exception as e:
             self.log(f"Error processing run sequence: {e}")
-            messagebox.showerror("Run Sequence Error", f"Could not process run sequence file: {e}")
+            messagebox.showerror("Run Sequence Error", f"Could not create run directory: {e}")
             return False
 
     def _write_to_report(self, text, mode="a"):
@@ -483,26 +749,123 @@ class MartaGUI:
         self._write_to_report(report_content, mode="a")
 
     def _save_all_plots(self):
-        if not self.animations:
-            self.log("No plots open to save.")
-            return
-        
+        """Save all plots to JPEG in the current run directory."""
         if not self.current_run_dir:
             self.log("Cannot save plots: No run directory set.")
             return
-            
-        self.log(f"Saving {len(self.animations)} plots...")
-        try:
+        
+        plots_saved = 0
+        
+        # Save open animated plots if any
+        if self.animations:
+            self.log(f"Saving {len(self.animations)} open plot windows...")
             for ani in self.animations:
-                fig = ani.fig
-                title = fig.canvas.manager.get_window_title()
-                safe_title = re.sub(r"[^a-zA-Z0-9_-]", "_", title)
+                try:
+                    fig = ani.fig if hasattr(ani, 'fig') else ani._fig
+                    title = fig.canvas.manager.get_window_title()
+                    safe_title = re.sub(r"[^a-zA-Z0-9_-]", "_", title)
+                    save_path = os.path.join(self.current_run_dir, f"{safe_title}.jpg")
+                    fig.savefig(save_path, dpi=150, bbox_inches='tight')
+                    plots_saved += 1
+                except Exception as e:
+                    self.log(f"Error saving plot: {e}")
+        
+        # Generate static plots from poller data (even if no windows open)
+        try:
+            # Generate static plots using the existing backend
+
+            
+            # Plot 1: MARTA Temperatures (if data available)
+            if self.poller and hasattr(self.poller, 'timestamps') and len(self.poller.timestamps) > 0:
+                with self.poller.lock:
+                    t = list(self.poller.timestamps)
+                    temps = [list(self.poller.temp[i]) for i in range(min(6, len(self.poller.temp)))]
                 
-                save_path = os.path.join(self.current_run_dir, f"{safe_title}.jpg")
-                fig.savefig(save_path)
-            self.log("All plots saved successfully.")
+                if t and any(temps):
+                    fig, ax = plt.subplots(figsize=(12, 6))
+                    labels = [f"TT0{i+1}" for i in range(len(temps))]
+                    for lab, y in zip(labels, temps):
+                        if y:
+                            ax.plot(t, y, label=lab)
+                    ax.set_ylabel("Temperature (°C)")
+                    ax.set_xlabel("Time")
+                    ax.set_title("MARTA Temperatures")
+                    ax.legend()
+                    ax.grid(True)
+                    fig.autofmt_xdate()
+                    save_path = os.path.join(self.current_run_dir, "marta_temperatures.jpg")
+                    fig.savefig(save_path, dpi=150, bbox_inches='tight')
+                    plt.close(fig)
+                    plots_saved += 1
+                    self.log(f"Saved: marta_temperatures.jpg")
+            
+            # Plot 2: Ambient Data (if ESP32 connected)
+            if self.ambient_poller and hasattr(self.ambient_poller, 'timestamps') and len(self.ambient_poller.timestamps) > 0:
+                with self.ambient_poller.lock:
+                    t = list(self.ambient_poller.timestamps)
+                    s1_t = list(self.ambient_poller.s1["temp"])
+                    s1_h = list(self.ambient_poller.s1["hum"])
+                    s1_d = list(self.ambient_poller.s1["dew"])
+                    s2_t = list(self.ambient_poller.s2["temp"])
+                
+                if t:
+                    # Ambient Temperature Plot
+                    fig, ax = plt.subplots(figsize=(12, 6))
+                    if s1_t: ax.plot(t, s1_t, label="S1 Temp", color='blue')
+                    if s2_t: ax.plot(t, s2_t, label="S2 Temp", color='orange')
+                    ax.set_ylabel("Temperature (°C)")
+                    ax.set_xlabel("Time")
+                    ax.set_title("Ambient Temperatures")
+                    ax.legend()
+                    ax.grid(True)
+                    fig.autofmt_xdate()
+                    save_path = os.path.join(self.current_run_dir, "ambient_temperature.jpg")
+                    fig.savefig(save_path, dpi=150, bbox_inches='tight')
+                    plt.close(fig)
+                    plots_saved += 1
+                    self.log(f"Saved: ambient_temperature.jpg")
+                    
+                    # Humidity Plot
+                    if s1_h:
+                        fig, ax = plt.subplots(figsize=(12, 6))
+                        ax.plot(t, s1_h, label="Humidity", color='green')
+                        ax.set_ylabel("Humidity (%)")
+                        ax.set_xlabel("Time")
+                        ax.set_title("Ambient Humidity")
+                        ax.legend()
+                        ax.grid(True)
+                        fig.autofmt_xdate()
+                        save_path = os.path.join(self.current_run_dir, "ambient_humidity.jpg")
+                        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+                        plt.close(fig)
+                        plots_saved += 1
+                        self.log(f"Saved: ambient_humidity.jpg")
+                    
+                    # Dew Point Plot
+                    if s1_d:
+                        fig, ax = plt.subplots(figsize=(12, 6))
+                        ax.plot(t, s1_d, label="Dew Point", color='purple')
+                        ax.set_ylabel("Dew Point (°C)")
+                        ax.set_xlabel("Time")
+                        ax.set_title("Dew Point")
+                        ax.legend()
+                        ax.grid(True)
+                        fig.autofmt_xdate()
+                        save_path = os.path.join(self.current_run_dir, "dew_point.jpg")
+                        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+                        plt.close(fig)
+                        plots_saved += 1
+                        self.log(f"Saved: dew_point.jpg")
+            
+            # Done saving plots
+            
         except Exception as e:
-            self.log(f"Error saving plots: {e}")
+            self.log(f"Error generating plots: {e}")
+        
+        if plots_saved > 0:
+            self.log(f"Total {plots_saved} plots saved to {self.current_run_dir}")
+        else:
+            self.log("No data available to generate plots.")
 
     # ---------- Connect MARTA ----------
     def connect(self):
@@ -510,7 +873,10 @@ class MartaGUI:
             self.log("Aborting connection: Run sequence setup failed.")
             return
 
-        ip = self.e_ip.get().strip()
+        ip = self.config.get("marta_ip", "")
+        if not ip:
+            messagebox.showwarning("MARTA IP", "Please set MARTA IP in the Settings tab.")
+            return
         self.log(f"Connecting to {ip}...")
         c = get_modbus_client(ip)
         if not c.connect():
@@ -526,21 +892,10 @@ class MartaGUI:
         self.btn_stop_all.config(state=tk.NORMAL)
 
         self.unified_logger = UnifiedEventLogger(
-            base_dir=self.e_log_dir.get(), # Changed to pass base_dir
-            run_name=self.current_run_name_short
+            base_dir=self.config.get("paths", {}).get("base_log_dir", ""),
+            run_name=self.current_run_name_short,
+            run_dir=self.current_run_dir  # Pass existing directory to avoid duplication
         )
-        # Fix: UnifiedEventLogger creates a subdir, so we should update current_run_dir to match it or use ours.
-        # Actually UnifiedEventLogger in v19.py took (log_dir, run_name) and created file at log_dir/run_name.csv
-        # My extracted UnifiedEventLogger in logger.py takes (base_dir, run_name) and creates a subdir.
-        # This is a discrepancy. I should align them.
-        # In v19.py: self.unified_logger = UnifiedEventLogger(log_dir=self.current_run_dir, run_name=self.current_run_name_short)
-        # And v19.py UnifiedEventLogger.__init__ used log_dir directly.
-        # My extracted logger.py creates a subdir.
-        # I should probably use the v19.py logic to avoid confusion or accept the new logic.
-        # The new logic in logger.py: self.run_dir = os.path.join(base_dir, f"{run_name}_{ts_str}")
-        # But `_process_run_sequence` already created a directory!
-        # I should update `logger.py` to accept an existing directory or update `app.py` to use `logger.py`'s logic.
-        # To minimize changes, I will modify `logger.py` later to match v19.py or adjust `app.py` to pass the directory.
         # Let's assume for now I pass `self.current_run_dir` as `base_dir` and it might create a subdir inside it. That's messy.
         # I'll fix `logger.py` in a separate step. For now I'll use `self.current_run_dir`.
         
@@ -557,9 +912,9 @@ class MartaGUI:
 
     # ---------- Connect ESP32 ----------
     def connect_esp32(self):
-        ip = self.e_esp_ip.get().strip()
+        ip = self.config.get("esp32_ip", "")
         if not ip:
-            messagebox.showwarning("ESP32 IP", "Please enter ESP32 IP.")
+            messagebox.showwarning("ESP32 IP", "Please set ESP32 IP in the Settings tab.")
             return
             
         if self.ambient_poller:
@@ -580,7 +935,7 @@ class MartaGUI:
             self.log("ESP32 connection test successful.")
             self.esp_connected = True 
             
-            self.ambient_poller = AmbientPoller(lambda: self.e_esp_ip.get().strip(), interval=10.0)
+            self.ambient_poller = AmbientPoller(lambda: self.config.get("esp32_ip", ""), interval=10.0)
             self.ambient_poller.start()
             update_pollers(self.poller, self.ambient_poller)
             self.update_ambient_display()
@@ -593,8 +948,8 @@ class MartaGUI:
 
     # ---------- Network Diagnostics ----------
     def test_network_connection(self):
-        marta_ip = self.e_ip.get().strip()
-        esp_ip = self.e_esp_ip.get().strip()
+        marta_ip = self.config.get("marta_ip", "")
+        esp_ip = self.config.get("esp32_ip", "")
         
         self.log(f"Starting network test for MARTA ({marta_ip}) and ESP32 ({esp_ip})...")
         threading.Thread(target=self._run_network_test, args=(marta_ip, esp_ip), daemon=True).start()
@@ -718,6 +1073,22 @@ class MartaGUI:
         else:
             messagebox.showwarning("No Log File", "No log file has been created yet. Connect to MARTA first.")
 
+    def open_settings(self):
+        """Open the configuration window."""
+        ConfigWindow(self.root, on_save_callback=self._on_config_saved)
+    
+    def _on_config_saved(self, new_config):
+        """Callback when config is saved from ConfigWindow."""
+        self.config = new_config
+        self.log("Configuration saved. UI fields updated.")
+        
+        # Update cycle defaults in Controller tab
+        defaults = new_config.get("cycle_defaults", {})
+        self.var_max.set(str(defaults.get("max_temp", 15)))
+        self.var_min.set(str(defaults.get("min_temp", 10)))
+        self.var_cycle.set(str(defaults.get("cycles", 2)))
+        self.var_dwell.set(str(defaults.get("dwell_s", 60)))
+
     def set_stable_color(self, is_stable: bool):
         self.gui_update_q.put({"type": "stable_color", "color": "green" if is_stable else "red"})
         
@@ -763,29 +1134,10 @@ class MartaGUI:
         return self.current_target if self.current_target is not None else ""
 
     def _set_param_state(self, state):
+        """Enable or disable parameter entries."""
         for e, b in getattr(self, "param_entries", []):
             e.config(state=state)
             b.config(state=state)
-            
-        if hasattr(self, 'e_seq_file'):
-            self.e_seq_file.config(state=state)
-        if hasattr(self, 'e_log_dir'):
-            self.e_log_dir.config(state=state)
-            
-        if state == tk.DISABLED:
-            self.e_ip.config(state=tk.DISABLED)
-            self.e_esp_ip.config(state=tk.DISABLED)
-            for child in self.root.winfo_children():
-                if isinstance(child, tk.OptionMenu) and child.grid_info()['row'] == 2:
-                    child.config(state=tk.DISABLED)
-                    break
-        else:
-            self.e_ip.config(state=tk.NORMAL)
-            self.e_esp_ip.config(state=tk.NORMAL)
-            for child in self.root.winfo_children():
-                if isinstance(child, tk.OptionMenu) and child.grid_info()['row'] == 2:
-                    child.config(state=tk.NORMAL)
-                    break
 
     # ---------- Chiller / CO2 controls ----------
     def start_chiller(self):

@@ -1,6 +1,6 @@
 {
     "marta_ip": "10.4.133.77",
-    "esp32_ip": "10.4.136.69",
+    "esp32_ip": "10.4.136.191",
     "cycle_defaults": {
         "max_temp": 15,
         "min_temp": 10,
@@ -8,11 +8,11 @@
         "dwell_s": 60
     },
     "safety_limits": {
-        "pump_rpm_default": 6000
+        "pump_rpm_default": 2000
     },
     "paths": {
-        "run_sequence_file": "/home/cleanroom2/Downloads/marta_logs/sequence.txt",
-        "base_log_dir": "/home/cleanroom2/Downloads/marta_logs"
+        "base_log_dir": "/home/cleanroom2/Downloads/marta_gui (1)/marta_logs",
+        "_comment": "base_log_dir: Directory where all run logs are saved. Web dashboard reads from here."
     },
     "influxdb": {
         "url": "http://localhost:8086",
@@ -20,5 +20,7 @@
         "org": "niser",
         "bucket": "ladder",
         "enabled": true
-    }
+    },
+    "last_run_number": 6,
+    "_comment": "MARTA GUI Configuration File"
 }

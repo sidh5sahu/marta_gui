@@ -21,15 +21,27 @@ HEADER = [
 ]
 
 class UnifiedEventLogger:
-    def __init__(self, base_dir, run_name):
+    def __init__(self, base_dir, run_name, run_dir=None):
+        """
+        Initialize logger.
+        
+        Args:
+            base_dir: Base log directory (only used if run_dir is None)
+            run_name: Name for this run (only used if run_dir is None)
+            run_dir: Full path to run directory (preferred, avoids duplicate directories)
+        """
         self.base_dir = base_dir
         self.run_name = run_name
         
-        # Create run directory
-        ts_str = datetime.now().strftime("%d%m%Y_%H%M")
-        self.run_dir = os.path.join(base_dir, f"{run_name}_{ts_str}")
+        # Use provided run_dir or create one
+        if run_dir:
+            self.run_dir = run_dir
+        else:
+            # Fallback: Create run directory
+            ts_str = datetime.now().strftime("%d%m%Y_%H%M")
+            self.run_dir = os.path.join(base_dir, f"{run_name}_{ts_str}")
+        
         os.makedirs(self.run_dir, exist_ok=True)
-        print(f"Created new run directory: {self.run_dir}")
         
         self.path = os.path.join(self.run_dir, "events.csv")
         self.lock = threading.Lock()
@@ -66,3 +78,9 @@ class UnifiedEventLogger:
                     
             except Exception as e:
                 print(f"Logging failed: {e}")
+
+    def close(self):
+        """Close the InfluxDB connection."""
+        if self.influx_logger:
+            self.influx_logger.close()
+            print("InfluxDB connection closed.")

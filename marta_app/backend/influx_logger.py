@@ -1,7 +1,5 @@
-from influxdb_client import InfluxDBClient, Point, WriteOptions
+from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
-from datetime import datetime
-import threading
 
 class InfluxLogger:
     def __init__(self, url, token, org, bucket):
