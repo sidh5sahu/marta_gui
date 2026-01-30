@@ -654,10 +654,6 @@ class MartaGUI:
                     self.lbl_status.config(fg=msg["color"])
                 elif msg_type == "co2_btn":
                     self.btn_start_co2.config(text=msg["text"], state=msg["state"])
-                elif msg_type == "setpoint_display":
-                    self.var_setpoint_display.set(msg["value"])
-                elif msg_type == "stop_co2":
-                    self.root.after(0, self.stop_co2)
                 elif msg_type == "error":
                     messagebox.showerror(msg["title"], msg["message"])
         except queue.Empty:
@@ -922,14 +918,80 @@ class MartaGUI:
 
     # ---------- Connect ESP32 ----------
     def connect_esp32(self):
-        if self.connection_mgr.connect_esp32():
-            self.connection_mgr.update_ambient_display(
-                self.var_s1, self.var_s2, self.var_dewavg, self.root
-            ) 
+        ip = self.config.get("esp32_ip", "")
+        if not ip:
+            messagebox.showwarning("ESP32 IP", "Please set ESP32 IP in the Settings tab.")
+            return
+            
+        if self.ambient_poller:
+            self.ambient_poller.stop()
+            self.ambient_poller = None
+            
+        url = f"http://{ip}/data"
+        self.log(f"Testing ESP32 connection at {url}...")
+        
+        try:
+            # requests is not imported? I need to import requests in app.py
+            import requests
+            r = requests.get(url, timeout=5)
+            r.raise_for_status() 
+            _ = r.json() 
+            
+            self.gui_update_q.put({"type": "esp_status", "text": f"ESP32: Connected ({ip})", "fg": "green"})
+            self.log("ESP32 connection test successful.")
+            self.esp_connected = True 
+            
+            self.ambient_poller = AmbientPoller(lambda: self.config.get("esp32_ip", ""), interval=10.0)
+            self.ambient_poller.start()
+            update_pollers(self.poller, self.ambient_poller)
+            self.update_ambient_display()
+
+        except Exception as e:
+            self.log(f"ESP32 connection FAILED: {e}")
+            self.gui_update_q.put({"type": "error", "title": "ESP32 Connection Failed", "message": f"Could not connect to {ip}.\n\nError: {e}"})
+            self.gui_update_q.put({"type": "esp_status", "text": "ESP32: FAILED", "fg": "red"})
+            self.esp_connected = False 
 
     # ---------- Network Diagnostics ----------
     def test_network_connection(self):
-        self.connection_mgr.test_network() 
+        marta_ip = self.config.get("marta_ip", "")
+        esp_ip = self.config.get("esp32_ip", "")
+        
+        self.log(f"Starting network test for MARTA ({marta_ip}) and ESP32 ({esp_ip})...")
+        threading.Thread(target=self._run_network_test, args=(marta_ip, esp_ip), daemon=True).start()
+
+    def _run_network_test(self, marta_ip, esp_ip):
+        results = []
+        
+        # Test MARTA (TCP 502)
+        try:
+            s = socket.create_connection((marta_ip, 502), timeout=3)
+            s.close()
+            results.append(f"MARTA ({marta_ip}): OK")
+        except socket.timeout:
+            results.append(f"MARTA ({marta_ip}): Timeout (Device offline or firewall?)")
+        except ConnectionRefusedError:
+            results.append(f"MARTA ({marta_ip}): Connection Refused (Service not running?)")
+        except OSError as e:
+            results.append(f"MARTA ({marta_ip}): Unreachable ({e})")
+            
+        # Test ESP32 (HTTP GET)
+        try:
+            r = requests.get(f"http://{esp_ip}/data", timeout=3)
+            if r.status_code == 200:
+                results.append(f"ESP32 ({esp_ip}): OK")
+            else:
+                results.append(f"ESP32 ({esp_ip}): HTTP {r.status_code}")
+        except requests.exceptions.Timeout:
+            results.append(f"ESP32 ({esp_ip}): Timeout")
+        except requests.exceptions.ConnectionError as e:
+            results.append(f"ESP32 ({esp_ip}): Connection Error ({e})")
+        except Exception as e:
+            results.append(f"ESP32 ({esp_ip}): Error ({e})")
+            
+        final_msg = "\n".join(results)
+        self.log(f"Network Test Results:\n{final_msg}")
+        self.gui_update_q.put({"type": "error", "title": "Network Test Results", "message": final_msg}) 
 
     def update_param_display(self):
         if self.poller:
@@ -1055,29 +1117,27 @@ class MartaGUI:
     def update_cycles(self):self.log(f"Cycles updated: {self.var_cycle.get()}")
     def update_dwell(self): self.log(f"Dwell updated: {self.var_dwell.get()}")
     def update_pump(self):
-        self.controller.update_pump(self.var_pump.get(), self.client_lock)
-
-    def get_active_setpoint(self):
-        return self.controller.get_active_setpoint()
-    
-    def get_current_target(self):
-        return self.controller.get_current_target()
-    
-    def set_stable_color(self, is_stable):
-        """Update stability indicator."""
-        self.controller.set_stable_color(is_stable)
-    
-    def _update_stopwatch(self):
-        """Update stopwatch display."""
-        if self.controller.stopwatch_start_time is None:
+        if not self.connected: return
+        try:
+            val = float(self.var_pump.get())
+        except ValueError:
+            self.log("Invalid Pump RPM.")
             return
         
-        elapsed_sec = int(time.time() - self.controller.stopwatch_start_time)
-        elapsed_min = elapsed_sec // 60
-        elapsed_sec_mod = elapsed_sec % 60
-        self.var_stopwatch_display.set(f"{elapsed_min:02d}:{elapsed_sec_mod:02d}")
-        
-        self.root.after(1000, self._update_stopwatch)
+        ok = False
+        try:
+            with self.client_lock:
+                ok = write_float(self.client, REGISTER_PUMP_SPEED, val)
+        except Exception as e:
+            self.log(f"Pump RPM write FAILED: {e}")
+            ok = False
+            
+        self.log(f"Pump RPM write {val} -> {'OK' if ok else 'FAIL'}")
+
+    def get_active_setpoint(self):
+        return self.active_setpoint if self.active_setpoint is not None else ""
+    def get_current_target(self):
+        return self.current_target if self.current_target is not None else ""
 
     def _set_param_state(self, state):
         """Enable or disable parameter entries."""
@@ -1087,75 +1147,675 @@ class MartaGUI:
 
     # ---------- Chiller / CO2 controls ----------
     def start_chiller(self):
-        self.controller.start_chiller(
-            self.client_lock,
-            self._update_button_states
-        )
+        if not self.connected: 
+            self.log("Cannot start chiller: Not connected.")
+            return
+        
+        ok = False
+        try:
+            with self.client_lock:
+                ok = write_control_word(self.client, True, self.co2_on)
+        except Exception as e:
+            self.log(f"Start Chiller FAILED: {e}")
+            ok = False
+            
+        if ok:
+            self.chiller_on = True
+            self.btn_start_chiller.config(state=tk.DISABLED)
+            self.btn_stop_chiller.config(state=tk.NORMAL)
+            self.log("Chiller started.")
+            self._enable_co2_after_delay()
+        else:
+            self.log("Chiller start failed.")
+
+    def _enable_co2_after_delay(self):
+        self.btn_start_co2.config(state=tk.DISABLED)
+        def countdown():
+            for i in range(60, 0, -1):
+                if not self.chiller_on:
+                    self.gui_update_q.put({"type": "co2_btn", "text": "Start CO₂", "state": tk.DISABLED})
+                    return
+                self.gui_update_q.put({"type": "co2_btn", "text": f"Start CO₂ ({i}s)", "state": tk.DISABLED})
+                time.sleep(1)
+            if self.chiller_on:
+                self.gui_update_q.put({"type": "co2_btn", "text": "Start CO₂", "state": tk.NORMAL})
+        threading.Thread(target=countdown, daemon=True).start()
 
     def stop_chiller(self):
-        self.controller.stop_chiller(
-            self.client_lock,
-            self._update_button_states,
-            self._reset_stopwatch,
-            self._set_param_state
-        )
+        if not self.connected: 
+            self.log("Cannot stop chiller: Not connected.")
+            return
+        
+        ok = False
+        try:
+            with self.client_lock:
+                ok = write_control_word(self.client, False, False)
+        except Exception as e:
+            self.log(f"Stop Chiller FAILED: {e}")
+            ok = False
+            
+        if ok:
+            self.chiller_on = False
+            self.co2_on = False
+            self.abort_cycle = True
+            self.btn_start_chiller.config(state=tk.NORMAL)
+            self.btn_stop_chiller.config(state=tk.DISABLED)
+            self.btn_start_co2.config(state=tk.DISABLED, text="Start CO₂")
+            self.btn_stop_co2.config(state=tk.DISABLED)
+            self.stopwatch_start_time = None 
+            self.var_stopwatch_display.set("00:00")
+            self._set_param_state(tk.NORMAL)
+            self.set_stable_color(False)
+            self.log("Chiller stopped.")
+            
+            self._generate_stop_report("Chiller Stopped")
+            self._save_all_plots()
+        else:
+            self.log("Chiller stop failed.")
 
     def start_co2(self):
-        params = {
-            'max_temp': self.var_max.get(),
-            'min_temp': self.var_min.get(),
-            'cycles': self.var_cycle.get(),
-            'dwell_s': self.var_dwell.get()
-        }
-        self.controller.start_co2(
-            self.client_lock,
-            params,
-            self._update_button_states,
-            self._set_param_state,
-            self._update_stopwatch
-        )
+        if not self.chiller_on:
+            messagebox.showwarning("Start Chiller", "Please start Chiller first.")
+            self.log("CO2 start failed: Chiller is off.")
+            return
+        if not self.connected: 
+            self.log("CO2 start failed: Not connected.")
+            return
+        
+        if not self.report_file_path:
+            self.log("CO2 start failed: Run Directory not set up. (Did you Connect?)")
+            messagebox.showerror("Run Error", "Run directory is not set. Please reconnect.")
+            return
+        
+        ok = False
+        try:
+            with self.client_lock:
+                ok = write_control_word(self.client, True, True)
+        except Exception as e:
+            self.log(f"Start CO2 FAILED: {e}")
+            ok = False
+            
+        if ok:
+            self._generate_start_report()
+
+            self.co2_on = True
+            self.abort_cycle = False
+            self.btn_start_co2.config(state=tk.DISABLED)
+            self.btn_stop_co2.config(state=tk.NORMAL)
+            self._set_param_state(tk.DISABLED)
+            self.set_stable_color(False)
+            
+            self.stopwatch_start_time = time.time()
+            self._update_stopwatch()
+            
+            self.log("CO₂ started. Dewpoint-cycle active.")
+            threading.Thread(target=self._dewpoint_cycle_worker, daemon=True).start()
+        else:
+            self.log("CO₂ start failed.")
 
     def stop_co2(self):
-        self.controller.stop_co2(
-            self.client_lock,
-            self._update_button_states,
-            self._reset_stopwatch,
-            self._set_param_state
-        )
+        if not self.connected: 
+            self.log("CO2 stop failed: Not connected.")
+            return
+        
+        ok = False
+        try:
+            with self.client_lock:
+                ok = write_control_word(self.client, True, False)
+        except Exception as e:
+            self.log(f"Stop CO2 FAILED: {e}")
+            ok = False
+            
+        if ok:
+            self.co2_on = False
+            self.abort_cycle = True
+            self.btn_start_co2.config(state=tk.NORMAL)
+            self.btn_stop_co2.config(state=tk.DISABLED)
+            
+            self.stopwatch_start_time = None 
+            self.var_stopwatch_display.set("00:00")
+            
+            self._set_param_state(tk.NORMAL)
+            self.set_stable_color(False)
+            self.log("CO₂ stopped.")
+
+            self._generate_stop_report("CO2 Stopped")
+            self._save_all_plots()
+        else:
+            self.log("CO₂ stop failed.")
 
     def stop_all(self):
-        self.controller.stop_all(
-            self.client_lock,
-            self._update_button_states,
-            self._reset_stopwatch,
-            self._set_param_state,
-            self._cancel_health_check
-        )
+        if self.chiller_on or self.co2_on:
+             self._generate_stop_report("System Stop All")
+             self._save_all_plots()
+        
+        if self.connected:
+            try:
+                with self.client_lock:
+                    write_control_word(self.client, False, False)
+            except Exception as e:
+                self.log(f"Stop All FAILED: {e}")
+            
+        self.abort_cycle = True
+        self.co2_on = False
+        self.chiller_on = False
+        if self.poller:
+            self.poller.stop(); self.poller = None
+        if self.ambient_poller:
+            self.ambient_poller.stop(); self.ambient_poller = None
+        if self.client:
+            try: self.client.close()
+            except Exception: pass
+            self.client = None
+        self.connected = False
+        update_pollers(None, None)
+        self._set_param_state(tk.NORMAL)
+        self.btn_start_chiller.config(state=tk.DISABLED)
+        self.btn_stop_chiller.config(state=tk.DISABLED)
+        self.btn_start_co2.config(state=tk.DISABLED, text="Start CO₂")
+        self.btn_stop_co2.config(state=tk.DISABLED)
+        self.btn_stop_all.config(state=tk.DISABLED)
+        self.gui_update_q.put({"type": "conn_status", "text": "MARTA: Disconnected", "fg": "red"})
+        self.gui_update_q.put({"type": "esp_status", "text": "ESP32: Disconnected", "fg": "red"})
+        
+        self.stopwatch_start_time = None 
+        self.var_stopwatch_display.set("00:00")
+        
+        if self.health_check_job: 
+            self.root.after_cancel(self.health_check_job)
+            self.health_check_job = None
+        
+        self.set_stable_color(False)
+        self.log("System stopped & disconnected.")
 
     # ---------- Dewpoint-cycle worker ----------
+    def _dewpoint_cycle_worker(self):
+        try:
+            max_t = float(self.var_max.get())
+            min_t = float(self.var_min.get())
+            cycles = int(self.var_cycle.get())
+            dwell = int(self.var_dwell.get())
+        except Exception as e:
+            self.log(f"Invalid parameters: {e}")
+            self.gui_update_q.put({"type": "error", "title": "Parameter Error", "message": f"Invalid cycle parameters. Check values.\nError: {e}"})
+            return
+
+        if not (max_t > min_t):
+            err_msg = f"Max Temp ({max_t}) must be greater than Min Temp ({min_t})."
+            self.log(f"Error: {err_msg}")
+            self.gui_update_q.put({"type": "error", "title": "Parameter Error", "message": f"{err_msg}\nCycle aborted."})
+            return
+            
+        self.target_temp = max_t 
+        cycle_count = 0
+        deadband = 0.7 
+
+        self.log(f"Starting direct-cycle logic Max={max_t} Min={min_t}")
+
+        # --- INITIAL DWELL AT MAX TEMP ---
+        self.log(f"Starting initial hold at {max_t:.2f}°C")
+        self.current_target = max_t
+        self.active_setpoint = max_t
+        self.var_setpoint_display.set(f"{self.active_setpoint:.2f}")
+
+        try: 
+            with self.client_lock:
+                write_float(self.client, REGISTER_TEMP_SETPOINT, max_t)
+        except Exception as e:
+            self.log(f"Initial SP WRITE FAILED: {e}")
+            self.root.after(0, self.stop_co2); return
+            
+        last_log_time = 0
+        while not self.abort_cycle and self.co2_on:
+            tt06 = self._get_latest_tt06()
+            status_msg = ""
+            if tt06 is None:
+                status_msg = f"Waiting for initial TT06 data... (Target: {max_t:.2f}°C)"
+            elif abs(tt06 - max_t) <= deadband:
+                self.set_stable_color(True)
+                self.log(f"✅ Initial TT06 reached {tt06:.2f}°C. Dwelling for {dwell}s.")
+                if self.unified_logger:
+                    log_data = {
+                        "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "Event_Type": "DWELL_INIT",
+                        "TT06": tt06, "Target_Temp": max_t, "Active_Setpoint": max_t,
+                        "Status": f"DWELL_{dwell}s"
+                    }
+                    self.unified_logger.log(log_data)
+                break
+            else:
+                self.set_stable_color(False)
+                status_msg = f"Waiting for initial TT06={tt06:.2f}°C -> {max_t:.2f}°C"
+            
+            now = time.time()
+            if now - last_log_time >= 5.0:
+                self.log(status_msg)
+                last_log_time = now
+            
+            if self.abort_cycle or not self.co2_on: 
+                self.log("Cycle aborted during initial wait."); return
+            time.sleep(1)
+
+        end_dwell = time.time() + dwell
+        while time.time() < end_dwell and not self.abort_cycle and self.co2_on:
+            time.sleep(1)
+        
+        if self.abort_cycle or not self.co2_on:
+            self.log("Cycle aborted during initial dwell."); return
+
+        # --- MAIN CYCLE LOOP ---
+        while not self.abort_cycle and self.co2_on and cycle_count < cycles:
+
+            going_down = (self.target_temp == max_t)
+            target_temp = min_t if going_down else max_t 
+            self.target_temp = target_temp 
+            self.current_target = target_temp 
+            
+            phase = "high_to_low" if going_down else "low_to_high"
+            self.log(f"--- Starting Trip ({phase}) to {target_temp:.2f}°C ---")
+
+            target_reached = False
+            while not self.abort_cycle and self.co2_on:
+                
+                dew_max = None
+                dew_limit = None
+                ambient_data = {}
+                if self.ambient_poller:
+                    latest_ambient = self.ambient_poller.get_latest()
+                    dew_max = latest_ambient.get("dew_max")
+                    if dew_max is not None:
+                        dew_limit = dew_max + 10.0
+                    
+                    s1 = latest_ambient.get("s1", (None,None,None))
+                    s2 = latest_ambient.get("s2", (None,None,None))
+                    
+                    ambient_data = {
+                        "Dew_Max": dew_max,
+                        "Amb_S1_T": s1[0], "Amb_S1_H": s1[1], "Amb_S1_D": s1[2],
+                        "Amb_S2_T": s2[0], "Amb_S2_H": s2[1], "Amb_S2_D": s2[2],
+                    }
+
+                temporary_target_temp = target_temp 
+                log_status = "WAITING"
+                
+                if going_down: 
+                    if dew_max is None:
+                        temporary_target_temp = 20.0
+                        log_status = "ESP32_FAIL_SAFE_20C"
+                    elif dew_limit is not None and dew_limit > target_temp:
+                        temporary_target_temp = dew_limit
+                        log_status = "DEW_BLOCK"
+
+                ok = False
+                try:
+                    with self.client_lock:
+                        ok = write_float(self.client, REGISTER_TEMP_SETPOINT, temporary_target_temp)
+                except Exception as e:
+                    self.log(f"SP WRITE FAILED: {e}")
+                    ok = False
+
+                if not ok:
+                    self.log("❌ Failed to write SP, retrying in 10s...")
+                    for _ in range(10):
+                        if self.abort_cycle or not self.co2_on: break
+                        time.sleep(1)
+                    continue 
+
+                self.active_setpoint = temporary_target_temp
+                self.var_setpoint_display.set(f"{self.active_setpoint:.2f}")
+                log_msg = f"WAITING: TT06 must reach {temporary_target_temp:.2f}°C (Logical target: {target_temp:.2f}°C)"
+                if log_status != "WAITING":
+                    log_msg += f" [{log_status}]"
+                self.log(log_msg)
+                
+                if self.unified_logger:
+                    log_data = {
+                        "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "Event_Type": "LOGIC",
+                        "Status": log_status,
+                        "TT06": self._get_latest_tt06(),
+                        "Target_Temp": target_temp,
+                        "Active_Setpoint": temporary_target_temp,
+                    }
+                    log_data.update(ambient_data) 
+                    self.unified_logger.log(log_data)
+                
+                self.set_stable_color(False) 
+
+                start_wait = time.time()
+                last_log_time = start_wait
+                
+                while time.time() - start_wait < 10.0: 
+                    if self.abort_cycle or not self.co2_on:
+                        break 
+
+                    tt06 = self._get_latest_tt06()
+                    
+                    if tt06 is not None and abs(tt06 - temporary_target_temp) <= deadband:
+                        self.set_stable_color(True)
+                        
+                        if log_status == "DEW_BLOCK" or log_status == "ESP32_FAIL_SAFE_20C":
+                            now = time.time()
+                            if now - last_log_time >= 5.0: 
+                                self.log(f"HOLDING at {tt06:.2f}°C due to {log_status}")
+                                last_log_time = now
+                        else:
+                            self.log(f"✅ TT06 reached {tt06:.2f}°C (matches {temporary_target_temp:.2f}°C)")
+                            if self.unified_logger:
+                                log_data = {
+                                    "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                    "Event_Type": "LOGIC",
+                                    "Status": "REACHED",
+                                    "TT06": tt06,
+                                    "Target_Temp": target_temp,
+                                    "Active_Setpoint": temporary_target_temp,
+                                }
+                                log_data.update(ambient_data)
+                                self.unified_logger.log(log_data)
+                            
+                            target_reached = True
+                            break 
+                    else:
+                        self.set_stable_color(False)
+                    
+                    time.sleep(1) 
+
+                if target_reached:
+                    break 
+                
+                if self.abort_cycle or not self.co2_on:
+                    break 
+            
+            if self.abort_cycle or not self.co2_on: break
+
+            self.log(f"Cycle reach target side, dwelling {dwell}s")
+            if self.unified_logger:
+                ambient_data = {}
+                if self.ambient_poller:
+                    latest_ambient = self.ambient_poller.get_latest()
+                    dew_max = latest_ambient.get("dew_max")
+                    s1 = latest_ambient.get("s1", (None,None,None))
+                    s2 = latest_ambient.get("s2", (None,None,None))
+                    
+                    ambient_data = {
+                        "Dew_Max": dew_max,
+                        "Amb_S1_T": s1[0], "Amb_S1_H": s1[1], "Amb_S1_D": s1[2],
+                        "Amb_S2_T": s2[0], "Amb_S2_H": s2[1], "Amb_S2_D": s2[2],
+                    }
+                    
+                log_data = {
+                    "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "Event_Type": "DWELL",
+                    "Status": f"DWELL_{dwell}s",
+                    "TT06": self._get_latest_tt06(),
+                    "Target_Temp": self.target_temp,
+                    "Active_Setpoint": self.active_setpoint,
+                }
+                log_data.update(ambient_data)
+                self.unified_logger.log(log_data)
+            
+            end_dwell = time.time() + dwell
+            while time.time() < end_dwell and not self.abort_cycle and self.co2_on:
+                time.sleep(1) 
+
+            if self.abort_cycle or not self.co2_on: break
+
+            if not going_down: 
+                cycle_count += 1
+                self.log(f"--- Cycle {cycle_count}/{cycles} complete ---")
+
+        self.log("✅ CYCLE SEQUENCE FINISHED OR ABORTED")
+        
+        if not self.abort_cycle and self.co2_on:
+            self.log("Cycle finished. Stopping CO2.")
+            self.root.after(0, self.stop_co2) 
+
+
+    def _get_latest_tt06(self):
+        if not self.poller:
+            return None
+            
+        with self.poller.lock: 
+            arr = self.poller.temp[5]
+            if not arr:
+                return None 
+                
+            for v in reversed(arr):
+                if v is not None:
+                    return v
+                    
+        return None 
 
     # ---------- plotting functions ----------
     def open_all_temps_plot(self):
-        self.plot_mgr.open_all_temps_plot()
+        if not self.poller:
+            messagebox.showinfo("Not Connected", "Connect to MARTA first.")
+            return
+        fig, ax = plt.subplots(); fig.canvas.manager.set_window_title("All Temperatures vs Time")
+        labels = [f"TT0{i+1}" for i in range(6)]
+        def animate(_):
+            with self.poller.lock:
+                t = list(self.poller.timestamps)
+                ys = [list(self.poller.temp[i]) for i in range(6)]
+            ax.clear()
+            if t:
+                for lab, y in zip(labels, ys): ax.plot(t, y, label=lab)
+                ax.set_ylabel("Temperature (°C)"); ax.set_xlabel("Time"); ax.legend(); ax.grid(True); fig.autofmt_xdate()
+            else:
+                ax.text(0.5,0.5,"NO DATA",ha="center",va="center",fontsize=16,transform=ax.transAxes)
+        ani = animation.FuncAnimation(fig, animate, interval=10000)
+        self.animations.append(ani); plt.show(block=False); self.log("All Temps plot opened.")
 
     def open_ambient_temp_plot(self):
-        self.plot_mgr.open_ambient_temp_plot()
+        if not self.ambient_poller:
+            messagebox.showinfo("Not Connected", "Connect to ESP32 first.")
+            return
+        fig, ax = plt.subplots(); fig.canvas.manager.set_window_title("Ambient Temperatures (S1-S4)")
+        def animate(_):
+            with self.ambient_poller.lock:
+                t = list(self.ambient_poller.timestamps)
+                t1 = list(self.ambient_poller.s1["temp"])
+                t2 = list(self.ambient_poller.s2["temp"])
+            ax.clear()
+            if t:
+                if any(v is not None for v in t1): ax.plot(t, t1, label="S1 (AM2315C)")
+                if any(v is not None for v in t2): ax.plot(t, t2, label="S2 (MAX6675)")
+                ax.set_ylabel("Temperature (°C)"); ax.set_xlabel("Time"); ax.legend(); ax.grid(True); fig.autofmt_xdate()
+            else:
+                ax.text(0.5,0.5,"NO DATA",ha="center",va="center",fontsize=16,transform=ax.transAxes)
+        ani = animation.FuncAnimation(fig, animate, interval=10000)
+        self.animations.append(ani); plt.show(block=False); self.log("Ambient Temp plot opened.")
 
     def open_humidity_plot(self):
-        self.plot_mgr.open_humidity_plot()
+        if not self.ambient_poller:
+            messagebox.showinfo("Not Connected", "Connect to ESP32 first.")
+            return
+        fig, ax = plt.subplots(); fig.canvas.manager.set_window_title("Ambient Humidity (S1, S3, S4)")
+        def animate(_):
+            with self.ambient_poller.lock:
+                t = list(self.ambient_poller.timestamps)
+                h1 = list(self.ambient_poller.s1["hum"])
+                # S2 is Thermocouple (No Hum)
+            ax.clear()
+            if t:
+                if any(v is not None for v in h1): ax.plot(t, h1, label="S1 (AM2315C)")
+                ax.set_ylabel("Humidity (%)"); ax.set_xlabel("Time"); ax.legend(); ax.grid(True); fig.autofmt_xdate()
+            else:
+                ax.text(0.5,0.5,"NO DATA",ha="center",va="center",fontsize=16,transform=ax.transAxes)
+        ani = animation.FuncAnimation(fig, animate, interval=10000)
+        self.animations.append(ani); plt.show(block=False); self.log("Humidity plot opened.")
 
     def open_dew_point_plot(self):
-        self.plot_mgr.open_dew_point_plot()
+        if not self.ambient_poller:
+            messagebox.showinfo("Not Connected", "Connect to ESP32 first.")
+            return
+        fig, ax = plt.subplots(); fig.canvas.manager.set_window_title("Ambient Dew Point (S1, S3, S4)")
+        def animate(_):
+            with self.ambient_poller.lock:
+                t = list(self.ambient_poller.timestamps)
+                d1 = list(self.ambient_poller.s1["dew"])
+                # S2 is Thermocouple (No Dew)
+            ax.clear()
+            if t:
+                if any(v is not None for v in d1): ax.plot(t, d1, label="S1 (AM2315C)")
+                ax.set_ylabel("Dew Point (°C)"); ax.set_xlabel("Time"); ax.legend(); ax.grid(True); fig.autofmt_xdate()
+            else:
+                ax.text(0.5,0.5,"NO DATA",ha="center",va="center",fontsize=16,transform=ax.transAxes)
+        ani = animation.FuncAnimation(fig, animate, interval=10000)
+        self.animations.append(ani); plt.show(block=False); self.log("Dew Point plot opened.")
 
     def open_cycle_plot(self):
-        self.plot_mgr.open_cycle_plot()
+        if not self.poller:
+            messagebox.showinfo("Not Connected", "Connect to MARTA first.")
+            return
+        fig, ax = plt.subplots(); fig.canvas.manager.set_window_title("Cycle Plot TT06 vs Setpoints")
+        
+        def animate(_):
+            with self.poller.lock:
+                t = list(self.poller.timestamps)
+                tt06 = list(self.poller.temp[5])
+                active_sp = list(self.poller.active_sp_history)
+                current_tgt = list(self.poller.current_target_history)
+            ax.clear()
+            if t:
+                if any(v is not None for v in tt06): 
+                    ax.plot(t, tt06, label="TT06 (°C)", color="blue", linewidth=2)
+                if any(v is not None for v in current_tgt): 
+                    ax.plot(t, current_tgt, label="Target Temp", color="red", linestyle="--", drawstyle="steps-post")
+                if any(v is not None for v in active_sp): 
+                    ax.plot(t, active_sp, label="Active Setpoint", color="green", linestyle=":", drawstyle="steps-post")
+
+                ax.set_ylabel("Temperature (°C)")
+                ax.set_xlabel("Time")
+                ax.legend()
+                ax.grid(True)
+                fig.autofmt_xdate()
+            else:
+                ax.text(0.5,0.5,"NO DATA",ha="center",va="center",fontsize=16,transform=ax.transAxes)
+        
+        ani = animation.FuncAnimation(fig, animate, interval=10000)
+        self.animations.append(ani)
+        plt.show(block=False)
+        self.log("Cycle plot opened.")
 
     def open_unified_plot(self):
-        self.plot_mgr.open_unified_plot()
+        fig, ax1 = plt.subplots(figsize=(10, 8))
+        fig.canvas.manager.set_window_title("Unified System Monitor")
+        
+        # Create second Y-axis for Humidity
+        ax2 = ax1.twinx()
+
+        def animate(_):
+            # Data Containers
+            t_marta, tt06, tt05, active_sp, current_tgt = [], [], [], [], []
+            t_amb, s1_t, s1_h, s1_d, s2_t = [], [], [], [], []
+            
+            # Fetch MARTA Data
+            if self.poller:
+                with self.poller.lock:
+                    t_marta = list(self.poller.timestamps)
+                    tt06 = list(self.poller.temp[5])
+                    tt05 = list(self.poller.temp[4])
+                    active_sp = list(self.poller.active_sp_history)
+                    current_tgt = list(self.poller.current_target_history)
+            
+            # Fetch Ambient Data
+            if self.ambient_poller:
+                with self.ambient_poller.lock:
+                    t_amb = list(self.ambient_poller.timestamps)
+                    s1_t = list(self.ambient_poller.s1["temp"])
+                    s1_h = list(self.ambient_poller.s1["hum"])
+                    s1_d = list(self.ambient_poller.s1["dew"])
+                    s2_t = list(self.ambient_poller.s2["temp"])
+
+            # --- Plot 1: Temperatures (Left Y-Axis) ---
+            ax1.clear()
+            ax2.clear() # Clear ax2 as well to prevent overplotting
+
+            # Re-setup axes labels after clear
+            ax1.set_ylabel("Temperature (°C)", color="blue")
+            ax1.set_xlabel("Time")
+            ax1.tick_params(axis='y', labelcolor="blue")
+            
+            ax2.set_ylabel("Humidity (RH%)", color="purple")
+            ax2.tick_params(axis='y', labelcolor="purple")
+            
+            # Plot Temperatures on ax1
+            if t_marta:
+                if any(v is not None for v in tt06): ax1.plot(t_marta, tt06, label="TT06 (Contact)", color="blue", linewidth=2)
+                if any(v is not None for v in tt05): ax1.plot(t_marta, tt05, label="TT05 (Air)", color="cyan", linewidth=1)
+                if any(v is not None for v in active_sp): ax1.plot(t_marta, active_sp, label="Setpoint", color="green", linestyle=":")
+                if any(v is not None for v in current_tgt): ax1.plot(t_marta, current_tgt, label="Target", color="red", linestyle="--")
+            
+            if t_amb:
+                if any(v is not None for v in s1_t): ax1.plot(t_amb, s1_t, label="Amb S1 Temp", color="orange", alpha=0.7)
+                if any(v is not None for v in s2_t): ax1.plot(t_amb, s2_t, label="Amb S2 Temp", color="brown", alpha=0.7)
+                if any(v is not None for v in s1_d): ax1.plot(t_amb, s1_d, label="Dew Point (S1)", color="navy", linewidth=2, linestyle="-.")
+
+            # Limits
+            try:
+                mx = float(self.var_max.get())
+                mn = float(self.var_min.get())
+                ax1.axhline(y=mx, color='r', linestyle='-', alpha=0.3)
+                ax1.axhline(y=mn, color='b', linestyle='-', alpha=0.3)
+            except: pass
+
+            # --- Plot 2: Humidity (Right Y-Axis) ---
+            if t_amb and any(v is not None for v in s1_h):
+                ax2.plot(t_amb, s1_h, label="S1 Humidity", color="purple", linestyle="-")
+            
+            # Combine Legends
+            lines1, labels1 = ax1.get_legend_handles_labels()
+            lines2, labels2 = ax2.get_legend_handles_labels()
+            ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper left", fontsize='small', ncol=2)
+            
+            ax1.grid(True)
+            fig.autofmt_xdate()
+
+        ani = animation.FuncAnimation(fig, animate, interval=5000)
+        self.animations.append(ani)
+        plt.show(block=False)
+        self.log("Unified plot opened.")
 
     def open_contact_point(self):
-        self.plot_mgr.open_contact_point()
+        if not self.ambient_poller:
+            messagebox.showinfo("Not Connected", "Connect to ESP32 first.")
+            return
+        fig, ax = plt.subplots(); fig.canvas.manager.set_window_title("Contact Point (S2) Temp")
+        def animate(_):
+            with self.ambient_poller.lock:
+                t = list(self.ambient_poller.timestamps)
+                t2 = list(self.ambient_poller.s2["temp"])
+            ax.clear()
+            if t:
+                if any(v is not None for v in t2): ax.plot(t, t2, label="S2 (Contact Point)", color="orange")
+                ax.set_ylabel("Temperature (°C)"); ax.set_xlabel("Time"); ax.legend(); ax.grid(True); fig.autofmt_xdate()
+            else:
+                ax.text(0.5,0.5,"NO DATA",ha="center",va="center",fontsize=16,transform=ax.transAxes)
+        ani = animation.FuncAnimation(fig, animate, interval=10000)
+        self.animations.append(ani); plt.show(block=False); self.log("Contact Point (S2) plot opened.")
 
+    # --- Connection Health Check ---
+    def _check_connection_health(self):
+        if self.connected and self.poller and self.poller.is_alive():
+            elapsed = time.time() - self.poller.last_successful_read_time
+            
+            tolerance = (self.poller.interval * 2.5) 
+            
+            if elapsed > tolerance:
+                if self.lab_conn.cget("text") != "MARTA: POLLING FAILED":
+                    self.log("POLLER HEARTBEAT FAILED. Updating status label.")
+                    self.gui_update_q.put({"type": "conn_status", "text": "MARTA: POLLING FAILED", "fg": "red"})
+            else:
+                if self.lab_conn.cget("text") != "MARTA: Connected":
+                    self.log("Poller heartbeat recovered.")
+                    self.gui_update_q.put({"type": "conn_status", "text": "MARTA: Connected", "fg": "green"})
+        
+        elif not self.connected:
+            if self.lab_conn.cget("text") != "MARTA: Disconnected":
+                self.gui_update_q.put({"type": "conn_status", "text": "MARTA: Disconnected", "fg": "red"})
+
+        self.health_check_job = self.root.after(5000, self._check_connection_health) 
 
     # --- Helper Methods for Manager Callbacks ---
     def _enable_control_buttons(self):

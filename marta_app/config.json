@@ -5,22 +5,39 @@
         "max_temp": 15,
         "min_temp": -35,
         "cycles": 1,
-        "dwell_s": 60
+        "dwell_s": 60,
+        "_comment": "Default thermal cycling parameters (can be changed in GUI)"
     },
     "safety_limits": {
-        "pump_rpm_default": 2000
+        "pump_rpm_default": 2000,
+        "_comment": "Safety limits and defaults for equipment protection"
     },
     "paths": {
         "base_log_dir": "/home/cleanroom2/Downloads/marta_gui (1)/marta_logs",
-        "_comment": "base_log_dir: Directory where all run logs are saved. Web dashboard reads from here."
+        "_comment": "Directory where all run logs, reports, and plots are saved. Web dashboard reads from here."
     },
     "influxdb": {
         "url": "http://localhost:8086",
         "token": "Muwa0MXdOvKQay3cPDVXRKfJBTcxKMKF9nx8u6FX2wmBghF-jPwSdF3s5JN2Ritu4bjetziarOrDGrgs_nYk1A==",
         "org": "niser",
         "bucket": "ladder",
-        "enabled": true
+        "enabled": true,
+        "_comment": "InfluxDB configuration for time-series data logging (optional - app works without it)"
     },
-    "last_run_number": 12,
-    "_comment": "MARTA GUI Configuration File"
+    "last_run_number": 17,
+    "_comment": "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    "_comment_1": "MARTA GUI - Unified Configuration File",
+    "_comment_2": "This is the ONLY configuration file used by the application",
+    "_comment_3": "Location: marta_app/config.json",
+    "_comment_4": "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    "_comment_marta_ip": "IP address of the MARTA chiller (Modbus TCP, port 502)",
+    "_comment_esp32_ip": "IP address of the ESP32 ambient sensor (HTTP)",
+    "_comment_last_run_number": "Auto-incremented run sequence number (managed by application)",
+    "_instructions": "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+    "_instructions_1": "HOW TO EDIT THIS FILE:",
+    "_instructions_2": "1. Stop the application before editing",
+    "_instructions_3": "2. Edit values using any text editor",
+    "_instructions_4": "3. Save and restart the application",
+    "_instructions_5": "4. Or use Settings tab in GUI to edit (recommended)",
+    "_instructions_6": "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550"
 }

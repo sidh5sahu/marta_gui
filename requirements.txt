@@ -1,0 +1,24 @@
+# Marta GUI - Python Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core GUI Framework (usually pre-installed on Linux)
+# tkinter is typically included with Python
+
+# Web Framework
+Flask>=2.3.0
+
+# Modbus Communication
+pymodbus>=3.5.0
+
+# Data Visualization
+matplotlib>=3.7.0
+
+# HTTP Requests (for ESP32 communication)
+requests>=2.31.0
+
+# Database (InfluxDB for time-series data logging)
+influxdb-client>=1.38.0
+
+# Optional: For better performance
+# numpy is typically installed as a matplotlib dependency
+numpy>=1.24.0
