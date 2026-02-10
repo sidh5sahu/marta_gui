@@ -13,7 +13,7 @@
         "_comment": "Safety limits and defaults for equipment protection"
     },
     "paths": {
-        "base_log_dir": "/home/cleanroom2/Downloads/marta_gui (1)/marta_logs",
+        "base_log_dir": "/home/manas/marta-gui/Log_files",
         "_comment": "Directory where all run logs, reports, and plots are saved. Web dashboard reads from here."
     },
     "influxdb": {
@@ -24,7 +24,7 @@
         "enabled": true,
         "_comment": "InfluxDB configuration for time-series data logging (optional - app works without it)"
     },
-    "last_run_number": 17,
+    "last_run_number": 19,
     "_comment": "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
     "_comment_1": "MARTA GUI - Unified Configuration File",
     "_comment_2": "This is the ONLY configuration file used by the application",

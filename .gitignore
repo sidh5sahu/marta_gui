@@ -4,3 +4,4 @@ __pycache__/
 venv/
 .env
 /home/cleanroom2/Downloads/marta_gui (1)/marta_logs
+marta_logs/*
