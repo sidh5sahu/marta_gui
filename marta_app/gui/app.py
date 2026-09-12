@@ -29,6 +29,9 @@ from .managers.report_manager import ReportManager
 from .managers.plot_manager import PlotManager
 from .managers.connection_manager import ConnectionManager
 from .managers.controller import MartaController
+from .managers.ladder_manager import LadderManager
+from .ladder_panel import LadderPanel
+from .psu_panel import PSUPanel
 
 class MartaGUI:
     def __init__(self, root):
@@ -60,12 +63,14 @@ class MartaGUI:
             },
             log_callback=self.log
         )
+        self.ladder_mgr = LadderManager(self.report_mgr)
         self.controller = MartaController(
             connection_mgr=self.connection_mgr,
             gui_update_q=self.gui_update_q,
             log_callback=self.log,
             report_mgr=self.report_mgr,
-            plot_mgr=self.plot_mgr
+            plot_mgr=self.plot_mgr,
+            ladder_mgr=self.ladder_mgr
         )
         
         # Keep client_lock for backward compatibility
@@ -92,10 +97,14 @@ class MartaGUI:
         
         self.tab_main = ttk.Frame(self.notebook)
         self.tab_marta = ttk.Frame(self.notebook)
+        self.tab_ladder = LadderPanel(self.notebook, self.ladder_mgr, self.log)
+        self.tab_psu = PSUPanel(self.notebook)
         self.tab_settings = ttk.Frame(self.notebook)
         
         self.notebook.add(self.tab_main, text="Controller")
         self.notebook.add(self.tab_marta, text="Marta")
+        self.notebook.add(self.tab_ladder, text="Ladder Test")
+        self.notebook.add(self.tab_psu, text="Power Supply")
         self.notebook.add(self.tab_settings, text="Settings")
         
         # --- CONTROLLER TAB CONTENT ---

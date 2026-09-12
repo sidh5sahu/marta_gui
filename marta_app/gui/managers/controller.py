@@ -7,6 +7,8 @@ thermal cycling with dew point protection, and parameter updates.
 
 import time
 import threading
+import socket
+import json
 import tkinter as tk
 from datetime import datetime
 from tkinter import messagebox
@@ -17,7 +19,7 @@ from ...backend.modbus import write_float, write_control_word, REGISTER_PUMP_SPE
 class MartaController:
     """Manages chiller and CO2 control with thermal cycling logic."""
     
-    def __init__(self, connection_mgr, gui_update_q, log_callback, report_mgr, plot_mgr):
+    def __init__(self, connection_mgr, gui_update_q, log_callback, report_mgr, plot_mgr, ladder_mgr=None):
         """
         Initialize MartaController.
         
@@ -27,12 +29,14 @@ class MartaController:
             log_callback: Function to call for logging messages
             report_mgr: ReportManager instance
             plot_mgr: PlotManager instance
+            ladder_mgr: LadderManager instance
         """
         self.connection_mgr = connection_mgr
         self.gui_update_q = gui_update_q
         self.log = log_callback
         self.report_mgr = report_mgr
         self.plot_mgr = plot_mgr
+        self.ladder_mgr = ladder_mgr
         
         # Control state
         self.chiller_on = False
@@ -297,6 +301,20 @@ class MartaController:
         
         self.log(f"Pump RPM write {val} -> {'OK' if ok else 'FAIL'}")
     
+    def send_power_supply_command(self, action, voltage=None, slot=1, channel=0):
+        """Send a command to the power supply server."""
+        try:
+            cmd = {"command": action, "slot": slot, "channel": channel}
+            if voltage is not None:
+                cmd["voltage"] = voltage
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(2.0)
+                s.connect(("127.0.0.1", 5555))
+                s.sendall((json.dumps(cmd) + "\n").encode('utf-8'))
+            self.log(f"PSU Cmd: {action} {voltage if voltage else ''}")
+        except Exception as e:
+            self.log(f"PSU Cmd Failed: {e}")
+
     def set_stable_color(self, is_stable):
         """
         Update stability indicator color.
@@ -389,6 +407,8 @@ class MartaController:
             elif abs(tt06 - max_t) <= deadband:
                 self.set_stable_color(True)
                 self.log(f"✅ Initial TT06 reached {tt06:.2f}°C. Dwelling for {dwell}s.")
+                self.send_power_supply_command("turn_on")
+                self.send_power_supply_command("set_voltage", voltage=3.3)
                 if self.connection_mgr.unified_logger:
                     log_data = {
                         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -414,9 +434,19 @@ class MartaController:
                 return
             time.sleep(1)
         
-        end_dwell = time.time() + dwell
-        while time.time() < end_dwell and not self.abort_cycle and self.co2_on:
-            time.sleep(1)
+        if self.ladder_mgr:
+            self.log("Triggering dynamic dwell: Running Ladder Tests...")
+            def _cb(msg):
+                self.log(f"[Ladder Test] {msg}")
+            
+            # This blocks until all modules are tested
+            self.ladder_mgr.run_ladder_tests(progress_callback=_cb)
+            self.log("Ladder Tests complete. Moving to next phase.")
+        else:
+            self.log(f"No ladder_mgr configured, dwelling for {dwell}s.")
+            end_dwell = time.time() + dwell
+            while time.time() < end_dwell and not self.abort_cycle and self.co2_on:
+                time.sleep(1)
         
         if self.abort_cycle or not self.co2_on:
             self.log("Cycle aborted during initial dwell.")
@@ -521,6 +551,13 @@ class MartaController:
                                 last_log_time = now
                         else:
                             self.log(f"✅ TT06 reached {tt06:.2f}°C (matches {temporary_target_temp:.2f}°C)")
+                            
+                            if going_down:
+                                self.send_power_supply_command("turn_off")
+                            else:
+                                self.send_power_supply_command("turn_on")
+                                self.send_power_supply_command("set_voltage", voltage=3.3)
+                                
                             if self.connection_mgr.unified_logger:
                                 log_data = {
                                     "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -575,9 +612,19 @@ class MartaController:
                 log_data.update(ambient_data)
                 self.connection_mgr.unified_logger.log(log_data)
             
-            end_dwell = time.time() + dwell
-            while time.time() < end_dwell and not self.abort_cycle and self.co2_on:
-                time.sleep(1)
+            if self.ladder_mgr:
+                self.log("Triggering dynamic dwell: Running Ladder Tests...")
+                def _cb(msg):
+                    self.log(f"[Ladder Test] {msg}")
+                
+                # This blocks until all modules are tested
+                self.ladder_mgr.run_ladder_tests(progress_callback=_cb)
+                self.log("Ladder Tests complete. Moving to next phase.")
+            else:
+                self.log(f"No ladder_mgr configured, dwelling for {dwell}s.")
+                end_dwell = time.time() + dwell
+                while time.time() < end_dwell and not self.abort_cycle and self.co2_on:
+                    time.sleep(1)
             
             if self.abort_cycle or not self.co2_on:
                 break
